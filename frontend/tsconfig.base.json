@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@robots/ui": ["packages/ui/src"],
+      "@robots/ui/*": ["packages/ui/src/*"],
+      "@robots/three-scene": ["packages/three-scene/src"],
+      "@robots/three-scene/*": ["packages/three-scene/src/*"],
+      "@robots/api-client": ["packages/api-client/src"],
+      "@robots/api-client/*": ["packages/api-client/src/*"],
+      "@robots/shared-types": ["packages/shared-types/src"],
+      "@robots/shared-types/*": ["packages/shared-types/src/*"],
+      "@robots/utils": ["packages/utils/src"],
+      "@robots/utils/*": ["packages/utils/src/*"]
+    }
+  }
+}

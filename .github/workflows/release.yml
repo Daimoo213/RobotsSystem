@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: scheduler
+          POSTGRES_PASSWORD: release-ci-database-password
+          POSTGRES_DB: scheduler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scheduler -d scheduler"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DEBUG: "true"
+      JWT_SECRET: release-ci-jwt-secret-not-for-production
+      DEVICE_GATEWAY_API_KEY: release-ci-gateway-secret-not-for-production
+      INITIAL_SETUP_TOKEN: release-ci-setup-secret-not-for-production
+      PG_HOST: 127.0.0.1
+      PG_PORT: "5432"
+      PG_USER: scheduler
+      PG_PASSWORD: release-ci-database-password
+      PG_DB: scheduler
+      REDIS_PASSWORD: release-ci-redis-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches VERSION
+        shell: bash
+        run: |
+          expected="v$(tr -d '\r\n' < VERSION)"
+          test "$GITHUB_REF_NAME" = "$expected" || {
+            echo "Tag $GITHUB_REF_NAME does not match VERSION ($expected)." >&2
+            exit 1
+          }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Test backend and deployment tooling
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          alembic check
+          python -m compileall -q app
+          pytest -q
+      - name: Test release tooling
+        run: pytest -q manager/tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: corepack enable
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Select image namespace
+        id: images
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "prefix=ghcr.io/$owner/robots-system" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build application images
+        env:
+          PREFIX: ${{ steps.images.outputs.prefix }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          version_number="${VERSION#v}"
+          docker build --build-arg VERSION="$version_number" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$version_number" \
+            -t "$PREFIX-backend:$VERSION" \
+            -t robots-system-deploy-backend:latest backend
+          docker build --build-arg APP=pm \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$version_number" \
+            -t "$PREFIX-pm:$VERSION" \
+            -t robots-system-deploy-pm:latest frontend
+          docker build --build-arg APP=om \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$version_number" \
+            -t "$PREFIX-om:$VERSION" \
+            -t robots-system-deploy-om:latest frontend
+      - name: Push immutable release images
+        env:
+          PREFIX: ${{ steps.images.outputs.prefix }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          docker push "$PREFIX-backend:$VERSION"
+          docker push "$PREFIX-pm:$VERSION"
+          docker push "$PREFIX-om:$VERSION"
+      - name: Build registry and offline release packages
+        env:
+          PREFIX: ${{ steps.images.outputs.prefix }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          python manager/deploy.py package \
+            --registry-prefix "$PREFIX" \
+            --version "$VERSION" \
+            --output release
+          python manager/deploy.py package \
+            --offline \
+            --version "$VERSION" \
+            --output release
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*.zip
+            release/*.sha256

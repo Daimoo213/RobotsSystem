@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PM端施工进度大屏</title>
+  <style>
+    :root {
+      --bg: #06111b;
+      --panel: rgba(9, 25, 41, 0.86);
+      --panel-2: rgba(11, 33, 54, 0.78);
+      --line: rgba(91, 183, 255, 0.22);
+      --line-strong: rgba(109, 216, 255, 0.54);
+      --text: #e6f6ff;
+      --muted: #79a3bf;
+      --soft: #aecce0;
+      --cyan: #2fd7ff;
+      --blue: #3d8cff;
+      --green: #34df9a;
+      --amber: #ffb33d;
+      --red: #ff5c6d;
+      --purple: #b56cff;
+      --pink: #ff56c8;
+      --row-h: 32px;
+      --gantt-left: 330px;
+      font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 2357px;
+      height: 1248px;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      letter-spacing: 0;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 9% 4%, rgba(28, 137, 255, 0.24), transparent 25%),
+        radial-gradient(circle at 78% 1%, rgba(46, 226, 174, 0.16), transparent 23%),
+        linear-gradient(120deg, rgba(7, 18, 29, 0.96), rgba(6, 15, 24, 0.98) 48%, rgba(8, 27, 39, 0.96));
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(105, 198, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(105, 198, 255, 0.05) 1px, transparent 1px);
+      background-size: 58px 58px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.24));
+    }
+
+    #app {
+      position: relative;
+      width: 2357px;
+      height: 1248px;
+      padding: 14px 16px 16px;
+      overflow: hidden;
+    }
+
+    .scan {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, transparent 0, rgba(120, 230, 255, 0.025) 50%, transparent 100%);
+      background-size: 100% 6px;
+      opacity: 0.7;
+      mix-blend-mode: screen;
+    }
+
+    .topbar {
+      height: 62px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      padding: 0 12px 0 14px;
+      border: 1px solid rgba(84, 172, 255, 0.2);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(12, 31, 52, 0.86), rgba(5, 13, 23, 0.82));
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: #07101a;
+      font-weight: 900;
+      border-radius: 8px;
+      background: conic-gradient(from 210deg, var(--cyan), var(--green), var(--blue), var(--cyan));
+      box-shadow: 0 0 24px rgba(47, 215, 255, 0.38);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 750;
+    }
+
+    .project {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--soft);
+      font-size: 17px;
+      padding-left: 16px;
+      border-left: 1px solid rgba(142, 197, 255, 0.2);
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--soft);
+      font-size: 15px;
+      white-space: nowrap;
+    }
+
+    .statusbar strong {
+      color: #eaffff;
+      font-size: 17px;
+    }
+
+    .user-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+      color: #d8efff;
+      border: 1px solid rgba(89, 175, 255, 0.28);
+      background: rgba(18, 46, 76, 0.72);
+    }
+
+    .kpis {
+      height: 102px;
+      display: grid;
+      grid-template-columns: 250px repeat(7, 1fr);
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .kpi {
+      position: relative;
+      padding: 14px 16px;
+      border: 1px solid rgba(85, 173, 255, 0.22);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(17, 56, 91, 0.78), rgba(8, 20, 34, 0.88)),
+        linear-gradient(90deg, rgba(67, 155, 255, 0.1), transparent);
+      overflow: hidden;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    .kpi::after {
+      content: "";
+      position: absolute;
+      right: -20px;
+      top: -50px;
+      width: 120px;
+      height: 160px;
+      transform: rotate(30deg);
+      background: linear-gradient(90deg, transparent, rgba(101, 219, 255, 0.11), transparent);
+    }
+
+    .kpi .label {
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .kpi .value {
+      margin-top: 8px;
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      font-size: 34px;
+      font-weight: 780;
+      color: #f2fbff;
+    }
+
+    .kpi .value small {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .kpi .accent {
+      position: absolute;
+      left: 16px;
+      bottom: 13px;
+      width: calc(100% - 32px);
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+      opacity: 0.9;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 420px 1fr 440px;
+      gap: 12px;
+      height: 1058px;
+    }
+
+    .col {
+      display: grid;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .left {
+      grid-template-rows: 294px 260px 1fr;
+    }
+
+    .right {
+      grid-template-rows: 414px 300px 150px 1fr;
+    }
+
+    .panel {
+      position: relative;
+      min-height: 0;
+      border: 1px solid rgba(89, 175, 255, 0.24);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(13, 35, 58, 0.88), rgba(7, 17, 29, 0.9)),
+        rgba(8, 25, 42, 0.9);
+      box-shadow:
+        0 14px 38px rgba(0, 0, 0, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      overflow: hidden;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(90deg, rgba(49, 184, 255, 0.07), transparent 18%, transparent 82%, rgba(60, 231, 175, 0.05));
+    }
+
+    .panel-head {
+      position: relative;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(103, 183, 255, 0.14);
+      background: rgba(5, 17, 30, 0.36);
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #eefbff;
+    }
+
+    .panel-title .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 2px;
+      background: var(--cyan);
+      box-shadow: 0 0 16px currentColor;
+    }
+
+    .subtle {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .stage-panel {
+      padding: 14px 16px 16px;
+    }
+
+    .donut-wrap {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .donut {
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, #092034 0 52%, transparent 53%),
+        conic-gradient(var(--green) 0 33%, var(--cyan) 33% 58%, var(--amber) 58% 75%, var(--blue) 75% 87%, rgba(62, 88, 112, 0.65) 87% 100%);
+      box-shadow: 0 0 32px rgba(47, 215, 255, 0.18);
+    }
+
+    .donut strong {
+      display: block;
+      font-size: 30px;
+      color: #f5fdff;
+    }
+
+    .donut span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .legend-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .legend-item {
+      display: grid;
+      grid-template-columns: 12px 1fr auto;
+      align-items: center;
+      gap: 8px;
+      color: var(--soft);
+      font-size: 15px;
+    }
+
+    .legend-item b {
+      color: #effbff;
+      font-weight: 700;
+    }
+
+    .chip-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      background: var(--c);
+      box-shadow: 0 0 12px var(--c);
+    }
+
+    .bar-list {
+      padding: 14px 16px 16px;
+      display: grid;
+      gap: 13px;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: 105px 1fr 48px;
+      gap: 10px;
+      align-items: center;
+      font-size: 14px;
+      color: var(--soft);
+    }
+
+    .track {
+      position: relative;
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(80, 116, 142, 0.22);
+    }
+
+    .fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--p);
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--c), color-mix(in srgb, var(--c) 55%, #ffffff));
+      box-shadow: 0 0 16px color-mix(in srgb, var(--c) 55%, transparent);
+    }
+
+    .stage-list {
+      position: relative;
+      padding: 13px 16px 16px;
+      display: grid;
+      gap: 13px;
+    }
+
+    .stage-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 48px;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--soft);
+    }
+
+    .stage-row strong {
+      color: #f1fbff;
+      font-weight: 650;
+    }
+
+    .stage-row.muted strong,
+    .stage-row.muted {
+      color: #7390a4;
+    }
+
+    .gantt-panel {
+      display: grid;
+      grid-template-rows: 60px 44px 1fr 42px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .seg {
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px solid rgba(96, 176, 255, 0.24);
+      border-radius: 7px;
+      color: var(--soft);
+      background: rgba(9, 27, 46, 0.72);
+      font-size: 14px;
+    }
+
+    .seg.active {
+      color: #effcff;
+      border-color: rgba(47, 215, 255, 0.68);
+      background: rgba(34, 116, 183, 0.42);
+      box-shadow: inset 0 0 18px rgba(47, 215, 255, 0.1);
+    }
+
+    .timeline-head {
+      display: grid;
+      grid-template-columns: var(--gantt-left) 1fr;
+      border-bottom: 1px solid rgba(104, 179, 255, 0.16);
+      background: rgba(8, 21, 35, 0.52);
+    }
+
+    .left-head {
+      padding: 11px 14px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      border-right: 1px solid rgba(104, 179, 255, 0.14);
+      font-size: 13px;
+    }
+
+    .months {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .months div {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid rgba(104, 179, 255, 0.12);
+    }
+
+    .gantt-body {
+      position: relative;
+      display: grid;
+      grid-template-columns: var(--gantt-left) 1fr;
+      overflow: hidden;
+    }
+
+    .labels,
+    .chart {
+      position: relative;
+      min-height: 0;
+    }
+
+    .labels {
+      border-right: 1px solid rgba(104, 179, 255, 0.14);
+      background: linear-gradient(90deg, rgba(7, 18, 31, 0.72), rgba(10, 24, 39, 0.3));
+    }
+
+    .label-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: var(--row-h);
+      display: grid;
+      grid-template-columns: 76px 1fr 52px;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      color: var(--soft);
+      font-size: 13px;
+      border-bottom: 1px solid rgba(104, 179, 255, 0.075);
+    }
+
+    .label-row:nth-child(odd) {
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    .label-row.stage {
+      color: #eaffff;
+      font-size: 14px;
+      font-weight: 700;
+      background: rgba(30, 93, 138, 0.18);
+    }
+
+    .code {
+      color: #54cdf8;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .prog {
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chart {
+      background:
+        linear-gradient(rgba(80, 151, 214, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(100, 174, 231, 0.1) 1px, transparent 1px);
+      background-size: 100% var(--row-h), calc(100% / 9) 100%;
+    }
+
+    .today-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 27.6%;
+      width: 2px;
+      background: linear-gradient(to bottom, transparent, rgba(255, 92, 109, 0.95), transparent);
+      box-shadow: 0 0 18px rgba(255, 92, 109, 0.45);
+      z-index: 4;
+    }
+
+    .today-line::before {
+      content: "今天 06-12";
+      position: absolute;
+      top: 7px;
+      left: -40px;
+      height: 20px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      color: #fff;
+      background: rgba(255, 76, 94, 0.88);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .bar {
+      position: absolute;
+      top: calc(var(--i) * var(--row-h) + 7px);
+      left: var(--x);
+      width: var(--w);
+      height: 18px;
+      border-radius: 5px;
+      background: rgba(70, 95, 118, 0.38);
+      overflow: hidden;
+      z-index: 2;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .bar::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: var(--p);
+      background: linear-gradient(90deg, var(--c), color-mix(in srgb, var(--c) 70%, #ffffff));
+      box-shadow: 0 0 18px color-mix(in srgb, var(--c) 42%, transparent);
+    }
+
+    .bar span {
+      position: relative;
+      z-index: 1;
+      display: block;
+      padding: 0 9px;
+      line-height: 17px;
+      color: #f7fdff;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .bar.stage-bar {
+      height: 22px;
+      top: calc(var(--i) * var(--row-h) + 5px);
+      border-radius: 6px;
+    }
+
+    .milestone {
+      position: absolute;
+      top: calc(var(--i) * var(--row-h) + 8px);
+      left: var(--x);
+      width: 15px;
+      height: 15px;
+      transform: rotate(45deg);
+      background: var(--amber);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      box-shadow: 0 0 18px rgba(255, 179, 61, 0.55);
+      z-index: 3;
+    }
+
+    .milestone::after {
+      content: attr(data-tip);
+      position: absolute;
+      transform: rotate(-45deg);
+      left: 18px;
+      top: -17px;
+      min-width: 106px;
+      color: #ffdfa8;
+      font-size: 12px;
+    }
+
+    .footer-legend {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      border-top: 1px solid rgba(104, 179, 255, 0.14);
+      background: rgba(4, 14, 24, 0.5);
+    }
+
+    .mini-key {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mini-key i {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      background: var(--c);
+      box-shadow: 0 0 10px var(--c);
+    }
+
+    .todo-list {
+      padding: 9px 12px 10px;
+      display: grid;
+      gap: 5px;
+    }
+
+    .todo {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 8px;
+      height: 25px;
+      padding: 0 8px 0 10px;
+      border: 1px solid rgba(87, 166, 242, 0.14);
+      border-radius: 6px;
+      background: rgba(10, 27, 45, 0.76);
+      font-size: 12.5px;
+    }
+
+    .todo-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #dcefff;
+    }
+
+    .todo-name::before {
+      content: "";
+      display: inline-block;
+      width: 3px;
+      height: 15px;
+      margin-right: 8px;
+      vertical-align: -3px;
+      border-radius: 99px;
+      background: var(--c);
+      box-shadow: 0 0 12px var(--c);
+    }
+
+    .tag {
+      height: 20px;
+      padding: 2px 7px;
+      border-radius: 5px;
+      color: var(--tag);
+      background: color-mix(in srgb, var(--tag) 18%, transparent);
+      border: 1px solid color-mix(in srgb, var(--tag) 35%, transparent);
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+
+    .camera-box {
+      position: relative;
+      height: calc(100% - 48px);
+      overflow: hidden;
+      background: #02070c;
+    }
+
+    .camera-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: saturate(0.92) contrast(1.06) brightness(0.78);
+    }
+
+    .camera-box::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+      background-size: 42px 42px;
+      opacity: 0.18;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .camera-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      color: #eaffff;
+      font-size: 13px;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    }
+
+    .cam-top,
+    .cam-bottom {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .cam-top {
+      top: 10px;
+    }
+
+    .cam-bottom {
+      bottom: 10px;
+    }
+
+    .rec {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #ff9faa;
+      font-weight: 700;
+    }
+
+    .rec i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 12px var(--red);
+    }
+
+    .ai-box {
+      position: absolute;
+      right: 22px;
+      bottom: 42px;
+      width: 150px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(47, 215, 255, 0.55);
+      background: rgba(3, 17, 28, 0.56);
+      color: #cbf8ff;
+      font-size: 12px;
+    }
+
+    .chart-card {
+      padding: 12px 16px;
+    }
+
+    .line-chart {
+      width: 100%;
+      height: 86px;
+      margin-top: 6px;
+      overflow: visible;
+    }
+
+    .events {
+      padding: 12px 16px;
+      display: grid;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--soft);
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 45px 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .event b {
+      color: #e9fbff;
+      font-weight: 650;
+    }
+
+    .event .tag {
+      justify-self: end;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">PM</div>
+        <h1>任务分配与施工管理系统</h1>
+        <div class="project">龙湖世纪城项目 <span class="subtle">施工进度指挥端</span></div>
+      </div>
+      <div class="statusbar">
+        <span>2026-06-12 星期五</span>
+        <span>14:36:28</span>
+        <span>在线 <strong style="color:var(--green)">24/24</strong></span>
+        <span>扬尘 <strong style="color:var(--amber)">轻微</strong></span>
+        <span>工期健康 <strong style="color:var(--green)">93</strong></span>
+        <span class="user-pill">PM管理端 · 张工</span>
+      </div>
+    </div>
+
+    <section class="kpis">
+      <div class="kpi" style="--accent:var(--cyan)">
+        <div class="label">总体进度</div>
+        <div class="value">32<small>%</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--green)">
+        <div class="label">土方工程完成</div>
+        <div class="value">92<small>%</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--blue)">
+        <div class="label">进行中任务</div>
+        <div class="value">18<small>项</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--amber)">
+        <div class="label">待闭环事项</div>
+        <div class="value">34<small>项</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--red)">
+        <div class="label">延期风险</div>
+        <div class="value">6<small>项</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--purple)">
+        <div class="label">资源负载</div>
+        <div class="value">86<small>%</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--cyan)">
+        <div class="label">渣土外运</div>
+        <div class="value">1,284<small>车</small></div>
+        <div class="accent"></div>
+      </div>
+      <div class="kpi" style="--accent:var(--green)">
+        <div class="label">AI识别合规率</div>
+        <div class="value">100<small>%</small></div>
+        <div class="accent"></div>
+      </div>
+    </section>
+
+    <main class="main">
+      <aside class="col left">
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>施工阶段健康度</div>
+            <span class="subtle">阶段级汇总</span>
+          </div>
+          <div class="stage-panel">
+            <div class="donut-wrap">
+              <div class="donut"><span><strong>32%</strong>总进度</span></div>
+              <div class="legend-list">
+                <div class="legend-item"><i class="chip-dot" style="--c:var(--green)"></i><span>土方开发工程</span><b>92%</b></div>
+                <div class="legend-item"><i class="chip-dot" style="--c:var(--cyan)"></i><span>基坑支护与降水</span><b>88%</b></div>
+                <div class="legend-item"><i class="chip-dot" style="--c:var(--amber)"></i><span>基础工程准备</span><b>18%</b></div>
+                <div class="legend-item"><i class="chip-dot" style="--c:var(--blue)"></i><span>主体结构</span><b>0%</b></div>
+                <div class="legend-item"><i class="chip-dot" style="--c:#7c8da4"></i><span>机电/装饰/室外</span><b>0%</b></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>土方资源负载</div>
+            <span class="subtle">近24小时</span>
+          </div>
+          <div class="bar-list">
+            <div class="metric-row"><span>挖机 EX-07</span><div class="track"><span class="fill" style="--p:95%;--c:var(--green)"></span></div><b>95%</b></div>
+            <div class="metric-row"><span>渣土车队</span><div class="track"><span class="fill" style="--p:88%;--c:var(--cyan)"></span></div><b>88%</b></div>
+            <div class="metric-row"><span>测量班组</span><div class="track"><span class="fill" style="--p:76%;--c:var(--blue)"></span></div><b>76%</b></div>
+            <div class="metric-row"><span>喷淋降尘</span><div class="track"><span class="fill" style="--p:84%;--c:var(--green)"></span></div><b>84%</b></div>
+            <div class="metric-row"><span>夜间照明</span><div class="track"><span class="fill" style="--p:63%;--c:var(--amber)"></span></div><b>63%</b></div>
+            <div class="metric-row"><span>安全巡检</span><div class="track"><span class="fill" style="--p:91%;--c:var(--purple)"></span></div><b>91%</b></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>施工阶段总览</div>
+            <span class="subtle">未到阶段仅显示大进度</span>
+          </div>
+          <div class="stage-list">
+            <div class="stage-row"><strong>土方开发</strong><div class="track"><span class="fill" style="--p:92%;--c:var(--green)"></span></div><b>92%</b></div>
+            <div class="stage-row"><strong>基坑支护</strong><div class="track"><span class="fill" style="--p:88%;--c:var(--cyan)"></span></div><b>88%</b></div>
+            <div class="stage-row"><strong>基础工程</strong><div class="track"><span class="fill" style="--p:18%;--c:var(--amber)"></span></div><b>18%</b></div>
+            <div class="stage-row muted"><strong>主体结构</strong><div class="track"><span class="fill" style="--p:0%;--c:var(--blue)"></span></div><b>0%</b></div>
+            <div class="stage-row muted"><strong>机电安装</strong><div class="track"><span class="fill" style="--p:0%;--c:var(--purple)"></span></div><b>0%</b></div>
+            <div class="stage-row muted"><strong>装饰装修</strong><div class="track"><span class="fill" style="--p:0%;--c:var(--pink)"></span></div><b>0%</b></div>
+            <div class="stage-row muted"><strong>室外景观</strong><div class="track"><span class="fill" style="--p:0%;--c:#7c8da4"></span></div><b>0%</b></div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="panel gantt-panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="dot"></span>任务调度甘特图</div>
+          <div class="toolbar">
+            <span class="seg">日</span>
+            <span class="seg">周</span>
+            <span class="seg active">月</span>
+            <span class="seg">季度</span>
+            <span class="seg active">土方优先</span>
+            <span class="seg">仅风险</span>
+            <span class="seg">导出</span>
+            <span class="seg">图层</span>
+          </div>
+        </div>
+        <div class="timeline-head">
+          <div class="left-head"><span>任务 / 阶段</span><span>进度</span></div>
+          <div class="months">
+            <div>2026-04</div><div>2026-05</div><div>2026-06</div><div>2026-07</div><div>2026-08</div><div>2026-09</div><div>2026-10</div><div>2026-11</div><div>2026-12</div>
+          </div>
+        </div>
+        <div class="gantt-body">
+          <div class="labels" id="labels"></div>
+          <div class="chart" id="chart">
+            <div class="today-line"></div>
+          </div>
+        </div>
+        <div class="footer-legend">
+          <span class="mini-key" style="--c:var(--green)"><i></i>已完成</span>
+          <span class="mini-key" style="--c:var(--cyan)"><i></i>收尾施工</span>
+          <span class="mini-key" style="--c:var(--blue)"><i></i>后续阶段</span>
+          <span class="mini-key" style="--c:var(--amber)"><i></i>关键里程碑</span>
+          <span class="mini-key" style="--c:var(--red)"><i></i>延期风险</span>
+        </div>
+      </section>
+
+      <aside class="col right">
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>待办任务</div>
+            <span class="seg active">+ 新增</span>
+          </div>
+          <div class="todo-list">
+            <div class="todo" style="--c:var(--red)"><span class="todo-name">土方收尾验槽预约与监理确认</span><span class="tag" style="--tag:var(--red)">紧急</span><span class="tag" style="--tag:var(--amber)">今日</span></div>
+            <div class="todo" style="--c:var(--amber)"><span class="todo-name">基坑边坡沉降预警复核</span><span class="tag" style="--tag:var(--amber)">高</span><span class="tag" style="--tag:var(--cyan)">AI</span></div>
+            <div class="todo" style="--c:var(--green)"><span class="todo-name">渣土外运票据与车次核销</span><span class="tag" style="--tag:var(--green)">闭环</span><span class="tag" style="--tag:var(--cyan)">财务</span></div>
+            <div class="todo" style="--c:var(--cyan)"><span class="todo-name">夜间施工报备与噪声记录上传</span><span class="tag" style="--tag:var(--cyan)">审批</span><span class="tag" style="--tag:var(--amber)">今晚</span></div>
+            <div class="todo" style="--c:var(--blue)"><span class="todo-name">雨后基坑排水泵站巡检</span><span class="tag" style="--tag:var(--blue)">巡检</span><span class="tag" style="--tag:var(--green)">正常</span></div>
+            <div class="todo" style="--c:var(--purple)"><span class="todo-name">无人机航拍进度对比入库</span><span class="tag" style="--tag:var(--purple)">影像</span><span class="tag" style="--tag:var(--cyan)">PM</span></div>
+            <div class="todo" style="--c:var(--green)"><span class="todo-name">喷淋降尘联动策略复测</span><span class="tag" style="--tag:var(--green)">环保</span><span class="tag" style="--tag:var(--amber)">16:00</span></div>
+            <div class="todo" style="--c:var(--cyan)"><span class="todo-name">土方标高复测数据复核</span><span class="tag" style="--tag:var(--cyan)">测量</span><span class="tag" style="--tag:var(--blue)">中</span></div>
+            <div class="todo" style="--c:var(--amber)"><span class="todo-name">临边防护缺口整改派单</span><span class="tag" style="--tag:var(--amber)">安全</span><span class="tag" style="--tag:var(--red)">待派</span></div>
+            <div class="todo" style="--c:var(--blue)"><span class="todo-name">下一阶段基础材料进场计划</span><span class="tag" style="--tag:var(--blue)">计划</span><span class="tag" style="--tag:var(--green)">待审</span></div>
+            <div class="todo" style="--c:var(--purple)"><span class="todo-name">分包单位本周产值确认</span><span class="tag" style="--tag:var(--purple)">合约</span><span class="tag" style="--tag:var(--amber)">待签</span></div>
+            <div class="todo" style="--c:var(--green)"><span class="todo-name">安全教育签到缺失补录</span><span class="tag" style="--tag:var(--green)">实名制</span><span class="tag" style="--tag:var(--cyan)">补录</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>摄像头视角</div>
+            <span class="subtle">CAM-03 东南角基坑</span>
+          </div>
+          <div class="camera-box">
+            <img src="assets/earthwork-cctv.png" alt="土方工程监控摄像头画面" />
+            <div class="camera-overlay">
+              <div class="cam-top"><span class="rec"><i></i>REC 1080P</span><span>14:36:28 土方收尾区</span></div>
+              <div class="ai-box">AI识别：挖机 4 · 渣土车 11 · 人员 18<br>扬尘指数：68 · 边坡风险：低</div>
+              <div class="cam-bottom"><span>作业面：C区基坑找平 / 外运收尾</span><span>网络 42ms</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>任务完成趋势</div>
+            <span class="subtle">计划 / 实际 / 预测</span>
+          </div>
+          <div class="chart-card">
+            <svg class="line-chart" viewBox="0 0 400 116">
+              <defs>
+                <linearGradient id="area" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" stop-color="#2fd7ff" stop-opacity="0.35"/>
+                  <stop offset="1" stop-color="#2fd7ff" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <g stroke="rgba(150,210,255,.16)" stroke-width="1">
+                <path d="M20 18H386M20 49H386M20 80H386"/>
+                <path d="M20 10V100M92 10V100M164 10V100M236 10V100M308 10V100M386 10V100"/>
+              </g>
+              <path d="M20 94 L86 82 L152 65 L218 44 L284 31 L356 17 L386 11 L386 100 L20 100Z" fill="url(#area)"/>
+              <path d="M20 92 L86 80 L152 62 L218 38 L284 26 L356 12" fill="none" stroke="#2fd7ff" stroke-width="3"/>
+              <path d="M20 95 L86 86 L152 72 L218 54 L284 39 L356 24" fill="none" stroke="#34df9a" stroke-width="3"/>
+              <path d="M20 97 L86 91 L152 79 L218 66 L284 54 L356 40" fill="none" stroke="#ffb33d" stroke-width="2" stroke-dasharray="7 6"/>
+            </svg>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><span class="dot"></span>实时事件</div>
+            <span class="subtle">闭环记录</span>
+          </div>
+          <div class="events">
+            <div class="event"><span>14:31</span><b>C区土方找平完成 76%</b><span class="tag" style="--tag:var(--cyan)">同步</span></div>
+            <div class="event"><span>13:58</span><b>渣土车队新增 18 车次</b><span class="tag" style="--tag:var(--green)">正常</span></div>
+            <div class="event"><span>11:42</span><b>边坡沉降读数触发复核</b><span class="tag" style="--tag:var(--amber)">复核</span></div>
+            <div class="event"><span>09:16</span><b>喷淋降尘联动已开启</b><span class="tag" style="--tag:var(--blue)">自动</span></div>
+          </div>
+        </section>
+      </aside>
+    </main>
+    <div class="scan"></div>
+  </div>
+
+  <script>
+    const rows = [
+      { type: "stage", code: "阶段-01", name: "土方开发工程", progress: "92%", x: 8, w: 27, p: 92, c: "#34df9a", label: "土方开发工程 · 收尾" },
+      { code: "EW-01", name: "施工区围挡复核与场地清表", progress: "100%", x: 5, w: 14, p: 100, c: "#34df9a", label: "清表完成" },
+      { code: "EW-02", name: "A区基坑第一层土方开挖", progress: "100%", x: 9, w: 16, p: 100, c: "#34df9a", label: "A区一层开挖" },
+      { code: "EW-03", name: "B区基坑第一层土方开挖", progress: "100%", x: 13, w: 17, p: 100, c: "#34df9a", label: "B区一层开挖" },
+      { code: "EW-04", name: "A区第二层土方开挖与外运", progress: "100%", x: 17, w: 18, p: 100, c: "#34df9a", label: "A区二层外运" },
+      { code: "EW-05", name: "B区第二层土方开挖与外运", progress: "98%", x: 21, w: 19, p: 98, c: "#34df9a", label: "B区二层外运" },
+      { code: "EW-06", name: "C区基坑土方开挖", progress: "84%", x: 24, w: 17, p: 84, c: "#2fd7ff", label: "C区土方开挖" },
+      { code: "EW-07", name: "渣土外运消纳联单核销", progress: "91%", x: 16, w: 27, p: 91, c: "#2fd7ff", label: "外运联单核销" },
+      { code: "EW-08", name: "基坑临时排水沟与集水井", progress: "89%", x: 22, w: 22, p: 89, c: "#2fd7ff", label: "排水系统" },
+      { code: "EW-09", name: "降尘喷淋与雾炮联动调试", progress: "94%", x: 20, w: 21, p: 94, c: "#34df9a", label: "降尘联动" },
+      { code: "EW-10", name: "边坡修整与临边防护加固", progress: "86%", x: 29, w: 18, p: 86, c: "#2fd7ff", label: "边坡修整" },
+      { code: "EW-11", name: "测量复核：坑底标高与放线", progress: "82%", x: 31, w: 16, p: 82, c: "#3d8cff", label: "标高复测" },
+      { code: "EW-12", name: "雨季应急通道硬化", progress: "78%", x: 27, w: 21, p: 78, c: "#ffb33d", label: "应急通道" },
+      { code: "EW-13", name: "C区土方找平与收边", progress: "76%", x: 35, w: 13, p: 76, c: "#2fd7ff", label: "找平收边" },
+      { code: "EW-14", name: "弃土场回单与环保归档", progress: "72%", x: 30, w: 24, p: 72, c: "#b56cff", label: "环保归档" },
+      { code: "EW-15", name: "土方收尾验槽准备", progress: "42%", x: 43, w: 13, p: 42, c: "#ffb33d", label: "验槽准备" },
+      { code: "EW-16", name: "监理旁站记录与影像上传", progress: "65%", x: 40, w: 15, p: 65, c: "#3d8cff", label: "旁站影像" },
+      { type: "stage", code: "阶段-02", name: "基坑支护与降水", progress: "88%", x: 9, w: 37, p: 88, c: "#2fd7ff", label: "支护与降水 · 大进度" },
+      { type: "stage", code: "阶段-03", name: "基础工程准备", progress: "18%", x: 49, w: 31, p: 18, c: "#ffb33d", label: "基础工程准备" },
+      { type: "stage", code: "阶段-04", name: "主体结构工程", progress: "0%", x: 62, w: 31, p: 0, c: "#3d8cff", label: "主体结构工程" },
+      { type: "stage", code: "阶段-05", name: "机电安装工程", progress: "0%", x: 68, w: 26, p: 0, c: "#b56cff", label: "机电安装工程" },
+      { type: "stage", code: "阶段-06", name: "装饰装修工程", progress: "0%", x: 72, w: 23, p: 0, c: "#ff56c8", label: "装饰装修工程" },
+      { type: "stage", code: "阶段-07", name: "室外景观与交付", progress: "0%", x: 78, w: 19, p: 0, c: "#7c8da4", label: "室外景观与交付" }
+    ];
+
+    const milestones = [
+      { i: 0, x: 35.5, tip: "土方基本完成" },
+      { i: 15, x: 56.5, tip: "验槽节点" },
+      { i: 18, x: 80, tip: "基础开工" }
+    ];
+
+    const labels = document.querySelector("#labels");
+    const chart = document.querySelector("#chart");
+    labels.style.height = `calc(${rows.length} * var(--row-h))`;
+    chart.style.height = `calc(${rows.length} * var(--row-h))`;
+
+    rows.forEach((row, i) => {
+      const label = document.createElement("div");
+      label.className = `label-row ${row.type === "stage" ? "stage" : ""}`;
+      label.style.top = `calc(${i} * var(--row-h))`;
+      label.innerHTML = `<span class="code">${row.code}</span><span class="name">${row.name}</span><span class="prog">${row.progress}</span>`;
+      labels.appendChild(label);
+
+      const bar = document.createElement("div");
+      bar.className = `bar ${row.type === "stage" ? "stage-bar" : ""}`;
+      bar.style.setProperty("--i", i);
+      bar.style.setProperty("--x", `${row.x}%`);
+      bar.style.setProperty("--w", `${row.w}%`);
+      bar.style.setProperty("--p", `${row.p}%`);
+      bar.style.setProperty("--c", row.c);
+      bar.innerHTML = `<span>${row.label}</span>`;
+      chart.appendChild(bar);
+    });
+
+    milestones.forEach((m) => {
+      const el = document.createElement("div");
+      el.className = "milestone";
+      el.style.setProperty("--i", m.i);
+      el.style.setProperty("--x", `${m.x}%`);
+      el.dataset.tip = m.tip;
+      chart.appendChild(el);
+    });
+  </script>
+</body>
+</html>

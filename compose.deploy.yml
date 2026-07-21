@@ -1,0 +1,149 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:?PG_USER is required}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is required}
+      POSTGRES_DB: ${PG_DB:?PG_DB is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 60s
+    logging: *default-logging
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7.2-alpine}
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redis_data:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  backend:
+    image: ${BACKEND_IMAGE:-robots-system-deploy-backend:latest}
+    build:
+      context: ./backend
+      args:
+        VERSION: ${RELEASE_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      APP_NAME: ${APP_NAME:-RobotsClusterScheduler}
+      APP_VERSION: ${RELEASE_VERSION:-dev}
+      DEBUG: "false"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      DEVICE_GATEWAY_API_KEY: ${DEVICE_GATEWAY_API_KEY:?DEVICE_GATEWAY_API_KEY is required}
+      INITIAL_SETUP_TOKEN: ${INITIAL_SETUP_TOKEN:?INITIAL_SETUP_TOKEN is required}
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: ${PG_USER:?PG_USER is required}
+      PG_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is required}
+      PG_DB: ${PG_DB:?PG_DB is required}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      BACKUP_DIRECTORY: /backups
+      PG_DUMP_PATH: /usr/bin/pg_dump
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend_backups:/backups
+    networks:
+      - data
+      - web
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  pm:
+    image: ${PM_IMAGE:-robots-system-deploy-pm:latest}
+    build:
+      context: ./frontend
+      args:
+        APP: pm
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PM_PORT:-8080}:80"
+    networks:
+      - web
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/api/auth/setup-status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 15s
+    logging: *default-logging
+
+  om:
+    image: ${OM_IMAGE:-robots-system-deploy-om:latest}
+    build:
+      context: ./frontend
+      args:
+        APP: om
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${OM_PORT:-8081}:80"
+    networks:
+      - web
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/api/auth/setup-status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 15s
+    logging: *default-logging
+
+networks:
+  data:
+    internal: true
+  web:
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_backups:

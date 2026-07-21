@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #050B13;
+  color: #E6F6FF;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  background:
+    radial-gradient(circle at 9% 4%, rgba(28,137,255,0.24), transparent 25%),
+    radial-gradient(circle at 78% 1%, rgba(46,226,174,0.16), transparent 23%),
+    linear-gradient(120deg, rgba(7,18,29,0.96), rgba(6,15,24,0.98) 48%, rgba(8,27,39,0.96));
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(105,198,255,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(105,198,255,0.05) 1px, transparent 1px);
+  background-size: 58px 58px;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0.8), rgba(0,0,0,0.24));
+}
+
+#root { width: 100%; height: 100%; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(47,215,255,0.08); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #2FD7FF; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #5FE3FF; }
+
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* 甘特图右列：隐藏原生横向滚动条，横向滚动由底部常驻条驱动 */
+.gantt-hide-x { scrollbar-width: none; -ms-overflow-style: none; }
+.gantt-hide-x::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* 甘特图底部常驻横向滚动条：统一高亮青色 */
+.gantt-hbar { scrollbar-width: thin; scrollbar-color: #2FD7FF rgba(47,215,255,0.08); }
+.gantt-hbar::-webkit-scrollbar { width: 0; height: 8px; }
+.gantt-hbar::-webkit-scrollbar-track { background: rgba(47,215,255,0.08); border-radius: 4px; }
+.gantt-hbar::-webkit-scrollbar-thumb { background: #2FD7FF; border-radius: 4px; }
+.gantt-hbar::-webkit-scrollbar-thumb:hover { background: #5FE3FF; }
+
+/* 细滚动条（待办列表等内部滚动） */
+.thin-scroll { scrollbar-width: thin; scrollbar-color: #2FD7FF rgba(47,215,255,0.06); }
+.thin-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+.thin-scroll::-webkit-scrollbar-track { background: rgba(47,215,255,0.06); border-radius: 2px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: #2FD7FF; border-radius: 2px; }
+.thin-scroll::-webkit-scrollbar-thumb:hover { background: #5FE3FF; }

@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "pnpm": "pnpm",
+  "runtime": {
+    "log_max_bytes": 5242880,
+    "log_backups": 5,
+    "health_timeout_seconds": 45
+  },
+  "services": {
+    "infra": {
+      "name": "基础设施 (Postgres / Redis)",
+      "mode": "compose",
+      "start_cmd": ["docker", "compose", "--env-file", "backend/.env", "up", "-d", "--wait", "--wait-timeout", "90", "postgres", "redis"],
+      "stop_cmd": ["docker", "compose", "--env-file", "backend/.env", "stop", "--timeout", "30", "postgres", "redis"],
+      "cwd": "{root}",
+      "color": "#f59e0b",
+      "hint": "本机 Docker 容器；不会停止 compose 中其他服务。",
+      "ensure_engine": true,
+      "docker_desktop": "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe",
+      "auto_start_engine": true,
+      "engine_wait_seconds": 120
+    },
+    "backend": {
+      "name": "后端 API (FastAPI)",
+      "mode": "process",
+      "prepare_cmd": ["{python}", "-m", "alembic", "upgrade", "head"],
+      "cmd": ["{python}", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "cwd": "{root}/backend",
+      "port": 8000,
+      "url": "http://127.0.0.1:8000/docs",
+      "health_urls": ["http://127.0.0.1:8000/ready", "http://127.0.0.1:8000/api/auth/setup-status"],
+      "color": "#38bdf8",
+      "hint": "启动前自动执行数据库迁移；默认不启用 reload。"
+    },
+    "frontend_pm": {
+      "name": "前端 PM 端 (施工进度指挥)",
+      "mode": "process",
+      "cmd": ["cmd", "/d", "/c", "{pnpm}", "--filter", "@robots/pm", "exec", "vite", "--host", "127.0.0.1", "--port", "5173"],
+      "cwd": "{root}/frontend",
+      "port": 5173,
+      "url": "http://127.0.0.1:5173",
+      "health_urls": ["http://127.0.0.1:5173"],
+      "color": "#a78bfa",
+      "hint": "Vite 开发服务，仅监听本机回环地址。"
+    },
+    "frontend_om": {
+      "name": "前端 O&M 端 (设备集群调度)",
+      "mode": "process",
+      "cmd": ["cmd", "/d", "/c", "{pnpm}", "--filter", "@robots/om", "exec", "vite", "--host", "127.0.0.1", "--port", "5174"],
+      "cwd": "{root}/frontend",
+      "port": 5174,
+      "url": "http://127.0.0.1:5174",
+      "health_urls": ["http://127.0.0.1:5174"],
+      "color": "#f472b6",
+      "hint": "Vite 开发服务，仅监听本机回环地址。"
+    }
+  }
+}
