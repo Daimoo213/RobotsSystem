@@ -39,5 +39,5 @@ httpx==0.28.1
 # (handled by fastapi middleware)
 
 # Auth
-pyjwt==2.10.1
+pyjwt==2.13.0
 passlib[bcrypt]==1.7.4
