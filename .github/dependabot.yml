@@ -36,6 +36,7 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      - dependency-name: python
   - package-ecosystem: docker
     directory: /frontend
     schedule:
@@ -48,6 +49,8 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      - dependency-name: node
+      - dependency-name: nginx
   - package-ecosystem: github-actions
     directory: /
     schedule:
