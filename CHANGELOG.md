@@ -4,6 +4,10 @@ All notable changes are recorded here. Versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Group compatible Dependabot updates and require manual review for major dependency upgrades.
+
 ## [0.1.1] - 2026-07-21
 
 ### Fixed
