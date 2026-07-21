@@ -42,7 +42,7 @@ jobs:
       REDIS_PASSWORD: ci-redis-password
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
           cache: pip
