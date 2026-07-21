@@ -12,7 +12,7 @@ RUN pnpm install --frozen-lockfile \
     && pnpm --filter "@robots/$APP" build \
     && cp -R "apps/$APP/dist" /out
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.31-alpine AS runtime
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /out /usr/share/nginx/html
