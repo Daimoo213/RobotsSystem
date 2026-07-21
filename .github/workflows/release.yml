@@ -89,7 +89,7 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "prefix=ghcr.io/$owner/robots-system" >> "$GITHUB_OUTPUT"
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
