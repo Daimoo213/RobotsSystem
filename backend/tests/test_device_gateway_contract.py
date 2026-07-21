@@ -107,7 +107,8 @@ async def test_existing_registration_uses_device_credential(monkeypatch: pytest.
     assert denied.value.status_code == 401
 
 
-def test_production_settings_require_gateway_key() -> None:
+def test_production_settings_require_gateway_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEVICE_GATEWAY_API_KEY", raising=False)
     with pytest.raises(ValueError, match="device_gateway_api_key"):
         Settings(_env_file=None, debug=False)
 

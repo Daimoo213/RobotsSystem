@@ -30,7 +30,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DEBUG: "true"
+      DEBUG: "false"
       JWT_SECRET: ci-jwt-signing-secret-not-for-production
       DEVICE_GATEWAY_API_KEY: ci-gateway-secret-not-for-production
       INITIAL_SETUP_TOKEN: ci-setup-secret-not-for-production
@@ -69,12 +69,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: corepack enable
       - name: Install workspace dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile

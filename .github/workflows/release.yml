@@ -27,7 +27,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DEBUG: "true"
+      DEBUG: "false"
       JWT_SECRET: release-ci-jwt-secret-not-for-production
       DEVICE_GATEWAY_API_KEY: release-ci-gateway-secret-not-for-production
       INITIAL_SETUP_TOKEN: release-ci-setup-secret-not-for-production
@@ -62,12 +62,14 @@ jobs:
           pytest -q
       - name: Test release tooling
         run: pytest -q manager/tests
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: corepack enable
       - name: Build frontend
         working-directory: frontend
         run: |
