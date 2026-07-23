@@ -1,7 +1,7 @@
 /** Event feed — scrolling list of realtime events. */
 
 import type { RealtimeEvent } from '@robots/shared-types';
-import { formatTime } from '@robots/utils';
+import { EVENT_TYPE_LABELS, formatTime, formatUserMessage } from '@robots/utils';
 
 interface EventFeedProps {
   events: RealtimeEvent[];
@@ -27,9 +27,9 @@ export function EventFeed({ events, maxItems = 20 }: EventFeedProps) {
           <div key={i} className="flex items-start gap-2 text-[12px]">
             <span className="font-mono text-[#5A7A92] whitespace-nowrap">{formatTime(e.time)}</span>
             <span className="rounded px-1 text-[10px] whitespace-nowrap" style={{ color, backgroundColor: `${color}22` }}>
-              {e.type}
+              {EVENT_TYPE_LABELS[e.type] || '其他事件'}
             </span>
-            <span className="text-[#aecce0]">{e.message}</span>
+            <span className="text-[#aecce0]">{formatUserMessage(e.message)}</span>
           </div>
         );
       })}

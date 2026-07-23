@@ -1,7 +1,7 @@
 /** Device card — used in O&M bottom deck. */
 
 import type { Device } from '@robots/shared-types';
-import { DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, getHealthColor, getStatusColor } from '@robots/utils';
+import { DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, HEALTH_STATUS_LABELS, getHealthColor, getStatusColor } from '@robots/utils';
 
 interface DeviceCardProps {
   device: Device;
@@ -23,12 +23,12 @@ export function DeviceCard({ device, onClick }: DeviceCardProps) {
       }}
     >
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[12px] text-[#79A3BF]">{DEVICE_TYPE_LABELS[device.type] || device.type}</span>
+        <span className="text-[12px] text-[#79A3BF]">{DEVICE_TYPE_LABELS[device.type] || '未知设备类型'}</span>
         <span
           className="rounded px-1.5 py-0.5 text-[10px] font-medium"
           style={{ color: statusColor, backgroundColor: `${statusColor}22` }}
         >
-          {DEVICE_STATUS_LABELS[device.status] || device.status}
+          {DEVICE_STATUS_LABELS[device.status] || '未知状态'}
         </span>
       </div>
       <div className="mb-2 text-[14px] font-mono font-bold text-[#E6F6FF]">{device.code}</div>
@@ -39,7 +39,7 @@ export function DeviceCard({ device, onClick }: DeviceCardProps) {
             <div key={key} className="text-center">
               <div className="text-[10px] text-[#5A7A92]">{label}</div>
               <div className="text-[10px] font-mono" style={{ color: getHealthColor(val) }}>
-                {val.toUpperCase()}
+                {HEALTH_STATUS_LABELS[val] || '未知'}
               </div>
             </div>
           );

@@ -6,6 +6,7 @@ import { getEnvironment, getHealthScore, getProject, triggerEstop } from '@robot
 import type { EnvironmentData, HealthScore, ProjectInfo } from '@robots/api-client';
 import { useAuthStore } from '../stores/authStore';
 import { usePmStore } from '../stores/pmStore';
+import { formatDisplayValue } from '@robots/utils';
 
 export function TopBar() {
   const { devices, estopActive, setEstop } = usePmStore();
@@ -48,7 +49,7 @@ export function TopBar() {
     <>
       <div className="flex items-center justify-between rounded-lg border border-[rgba(91,183,255,0.2)] bg-[rgba(12,31,52,0.86)] px-4 py-2" style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}>
         <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md font-mono font-black text-[#07111C]" style={{ background: 'linear-gradient(135deg, #2FD7FF, #34DF9A)' }}>R</div>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md font-mono font-black text-[#07111C]" style={{ background: 'linear-gradient(135deg, #2FD7FF, #34DF9A)' }}>机</div>
           <div className="min-w-0">
             <div className="truncate text-[15px] font-medium text-[#E6F6FF]">{project?.name || '机器人集群调度系统'}</div>
             <div className="truncate text-[11px] text-[#79A3BF]">{project?.location || '项目资料尚未配置'}</div>
@@ -57,7 +58,7 @@ export function TopBar() {
 
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5"><Activity size={14} className="text-[#34DF9A]" /><span className="text-[12px] text-[#aecce0]">在线 <span className="font-mono text-[#34DF9A]">{onlineCount}/{devices.length}</span></span></div>
-          <div className="flex items-center gap-1.5"><Eye size={14} style={{ color: dustColor }} /><span className="text-[12px] text-[#aecce0]">环境 <span style={{ color: dustColor }}>{environment?.has_data ? environment.dust_level : '无数据'}</span></span></div>
+          <div className="flex items-center gap-1.5"><Eye size={14} style={{ color: dustColor }} /><span className="text-[12px] text-[#aecce0]">环境 <span style={{ color: dustColor }}>{environment?.has_data ? formatDisplayValue(environment.dust_level, '无数据') : '无数据'}</span></span></div>
           <div className="flex items-center gap-1.5"><Gauge size={14} className="text-[#2FD7FF]" /><span className="text-[12px] text-[#aecce0]">健康 <span className="font-mono text-[#2FD7FF]">{health?.score ?? '--'}</span></span></div>
           <div className="flex items-center gap-1.5"><User size={14} className="text-[#B56CFF]" /><span className="text-[12px] text-[#aecce0]">{displayName || '未登录'}</span><button onClick={logout} title="退出登录" className="text-[#79A3BF] hover:text-[#FF5C6D]"><LogOut size={13} /></button></div>
           <button onClick={() => setConfirmingEstop(true)} disabled={estopActive} className="flex items-center gap-1.5 rounded-lg border border-[#FF5C6D] bg-[rgba(255,92,109,0.15)] px-4 py-1.5 text-[13px] font-medium text-[#FF5C6D] disabled:opacity-40"><AlertTriangle size={14} /> 急停</button>

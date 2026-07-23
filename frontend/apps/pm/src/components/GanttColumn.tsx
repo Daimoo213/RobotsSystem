@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Layers, Filter, AlertTriangle, Milestone } from 'lucide-react';
 import { Panel, ProgressBar } from '@robots/ui';
 import { usePmStore } from '../stores/pmStore';
-import { COLORS, formatDateTime } from '@robots/utils';
+import { COLORS, formatDateTime, formatUnit, PROCESSES, STAGE_LABELS, TASK_STATUS_LABELS } from '@robots/utils';
 import type { Task } from '@robots/shared-types';
 import { exportReport } from '@robots/api-client';
 import { listDevices, pauseTask, reassignTask, resumeTask } from '@robots/api-client';
@@ -27,15 +27,7 @@ const STATUS_FILL: Record<string, string> = {
   paused: COLORS.amber, failed: COLORS.red, assigned: COLORS.cyan,
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  completed: '已完成', running: '进行中', pending: '待开始',
-  paused: '已暂停', failed: '失败', assigned: '已分配',
-};
-
-const STAGE_LABELS: Record<string, string> = {
-  earthwork: '土方开发', foundation: '基础施工', main: '主体施工',
-  mep: '机电安装', finishing: '装修施工', landscape: '室外景观', completion: '竣工',
-};
+const STATUS_LABELS = TASK_STATUS_LABELS;
 
 // 每个粒度对应的"每天像素数"——切换会改变任务条宽度与可滚动性
 const PX_PER_DAY: Record<Granularity, number> = {
@@ -198,7 +190,7 @@ export function GanttColumn() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'robots-scheduler-report.xlsx';
+      link.download = '机器人调度系统报表.xlsx';
       link.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -262,10 +254,10 @@ export function GanttColumn() {
                       <span className="truncate text-[#aecce0]">{t.name}</span>
                     </div>
                     {t.deliverable_qty ? (
-                      <span className="text-[9px] text-[#5A7A92]">交付 {t.deliverable_qty}{t.deliverable_unit}</span>
+                      <span className="text-[9px] text-[#5A7A92]">交付 {t.deliverable_qty}{formatUnit(t.deliverable_unit)}</span>
                     ) : null}
                   </div>
-                  <span className="ml-1 shrink-0 text-[9px]" style={{ color: STATUS_FILL[t.status] }}>{STATUS_LABELS[t.status]}</span>
+                      <span className="ml-1 shrink-0 text-[9px]" style={{ color: STATUS_FILL[t.status] }}>{STATUS_LABELS[t.status] || '未知状态'}</span>
                 </div>
               ))}
             </div>
@@ -441,7 +433,7 @@ function buildTicks(minTime: number, maxTime: number, g: Granularity): { x: numb
     const d = new Date(minTime);
     for (let i = 0; i < 12; i++) {
       const dd = new Date(d); dd.setDate(d.getDate() + i * 7);
-      push(dd, `D${i + 1}`);
+       push(dd, `第${i + 1}周`);
     }
   } else if (g === 'month') {
     const d = new Date(minTime);
@@ -453,7 +445,7 @@ function buildTicks(minTime: number, maxTime: number, g: Granularity): { x: numb
     const d = new Date(minTime);
     for (let i = 0; i < 8; i++) {
       const dd = new Date(d); dd.setMonth(d.getMonth() + i * 3);
-      push(dd, `${dd.getFullYear()}Q${Math.floor(dd.getMonth() / 3) + 1}`);
+       push(dd, `${dd.getFullYear()}年第${Math.floor(dd.getMonth() / 3) + 1}季度`);
     }
   }
   return ticks;
@@ -462,7 +454,7 @@ function buildTicks(minTime: number, maxTime: number, g: Granularity): { x: numb
 // ── 任务详情弹窗 ──────────────────────────────────────────
 function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const color = STATUS_FILL[task.status] || COLORS.gray;
-  const procName = task.process_id;
+  const procName = PROCESSES[task.process_id]?.name || '未知工序';
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [error, setError] = useState('');
@@ -488,16 +480,16 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
           <Row label="任务编码" value={task.code} mono />
           <Row label="任务名称" value={task.name} />
           <Row label="工序" value={procName} />
-          <Row label="状态" value={STATUS_LABELS[task.status] || task.status} color={color} />
+           <Row label="状态" value={STATUS_LABELS[task.status] || '未知状态'} color={color} />
           <Row label="优先级" value={String(task.priority)} />
-          <Row label="阶段" value={STAGE_LABELS[task.stage] || task.stage} />
+          <Row label="阶段" value={STAGE_LABELS[task.stage] || '未知阶段'} />
           {task.planned_start && <Row label="计划开始" value={formatDateTime(task.planned_start)} />}
           {task.planned_end && <Row label="计划结束" value={formatDateTime(task.planned_end)} />}
           {task.started_at && <Row label="实际开始" value={formatDateTime(task.started_at)} />}
           {task.completed_at && <Row label="实际完成" value={formatDateTime(task.completed_at)} />}
           <Row label="预估工期" value={`${task.estimated_duration}分钟 (${Math.round(task.estimated_duration / 60 * 10) / 10}小时)`} />
-          {task.deliverable_qty ? <Row label="交付总量" value={`${task.deliverable_qty} ${task.deliverable_unit || ''}`} color={COLORS.cyan} /> : null}
-          {task.completed_qty > 0 ? <Row label="已完成量" value={`${task.completed_qty} ${task.deliverable_unit || ''}`} color={COLORS.green} /> : null}
+           {task.deliverable_qty ? <Row label="交付总量" value={`${task.deliverable_qty} ${formatUnit(task.deliverable_unit)}`} color={COLORS.cyan} /> : null}
+           {task.completed_qty > 0 ? <Row label="已完成量" value={`${task.completed_qty} ${formatUnit(task.deliverable_unit)}`} color={COLORS.green} /> : null}
           {task.map_point_name ? <Row label="目标点位" value={`${task.map_point_code} ${task.map_point_name}`} /> : null}
           {task.dependencies?.length ? <Row label="前置依赖" value={task.dependencies.length + ' 项'} /> : null}
         </div>

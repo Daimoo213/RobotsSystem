@@ -19,9 +19,9 @@ export function LoginPage() {
       <div className="w-96 rounded-xl border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.9)] p-8" style={{ boxShadow: '0 0 40px rgba(47,215,255,0.15)' }}>
         <div className="mb-6 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg font-mono text-xl font-black text-[#07111C]"
-            style={{ background: 'linear-gradient(135deg, #2FD7FF, #34DF9A)', boxShadow: '0 0 24px rgba(47,215,255,0.4)' }}>R</div>
+            style={{ background: 'linear-gradient(135deg, #2FD7FF, #34DF9A)', boxShadow: '0 0 24px rgba(47,215,255,0.4)' }}>机</div>
           <h1 className="text-[20px] font-bold text-[#E6F6FF]">施工设备集群调度系统</h1>
-          <p className="mt-1 text-[12px] text-[#79A3BF]">O&M端 · 设备集群3D调度端</p>
+          <p className="mt-1 text-[12px] text-[#79A3BF]">运维端 · 设备集群三维调度端</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

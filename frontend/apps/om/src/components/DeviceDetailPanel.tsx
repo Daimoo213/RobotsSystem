@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Play, RotateCcw, X } from 'lucide-react';
 import { useOmStore } from '../stores/omStore';
-import { DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, formatPosition, getHealthColor, getStatusColor } from '@robots/utils';
+import { ALERT_STATUS_LABELS, DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, HEALTH_STATUS_LABELS, MISSION_STATE_LABELS, formatPosition, formatUserMessage, getHealthColor, getStatusColor } from '@robots/utils';
 import { getDeviceDetail, requestManualCalibration, sendCommand } from '@robots/api-client';
 import type { DeviceDetail } from '@robots/api-client';
 
@@ -39,8 +39,8 @@ export function DeviceDetailPanel() {
         <Section title="基本信息">
           <Row label="编码" value={device.code} mono />
           <Row label="名称" value={device.name} />
-          <Row label="类型" value={DEVICE_TYPE_LABELS[device.type] || device.type} />
-          <Row label="状态" value={DEVICE_STATUS_LABELS[device.status] || device.status} color={statusColor} />
+           <Row label="类型" value={DEVICE_TYPE_LABELS[device.type] || '未知设备类型'} />
+           <Row label="状态" value={DEVICE_STATUS_LABELS[device.status] || '未知状态'} color={statusColor} />
           <Row label="标段" value={device.section_id || '-'} />
         </Section>
 
@@ -48,15 +48,15 @@ export function DeviceDetailPanel() {
           <Row label="位置" value={formatPosition(device.position)} mono />
           <Row label="电量" value={`${Math.round(device.battery)}%`} color={device.battery < 20 ? '#FF5C6D' : '#34DF9A'} />
           <Row label="上报时间" value={device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : '未上报'} />
-          {device.operational_metrics?.power_kw !== undefined && <Row label="功率" value={`${device.operational_metrics.power_kw} kW`} />}
-          {device.operational_metrics?.energy_kwh_total !== undefined && <Row label="累计能耗" value={`${device.operational_metrics.energy_kwh_total} kWh`} />}
+           {device.operational_metrics?.power_kw !== undefined && <Row label="功率" value={`${device.operational_metrics.power_kw} 千瓦`} />}
+           {device.operational_metrics?.energy_kwh_total !== undefined && <Row label="累计能耗" value={`${device.operational_metrics.energy_kwh_total} 千瓦时`} />}
         </Section>
 
         <Section title="体检指标">
           <div className="flex justify-between">
             {HEALTH_KEYS.map(({ key, label }) => {
               const value = device.health?.[key as keyof typeof device.health] || 'unknown';
-              return <div key={key} className="text-center"><div className="text-[11px] text-[#5A7A92]">{label}</div><div className="text-[12px] font-mono font-bold" style={{ color: getHealthColor(value) }}>{value.toUpperCase()}</div></div>;
+               return <div key={key} className="text-center"><div className="text-[11px] text-[#5A7A92]">{label}</div><div className="text-[12px] font-mono font-bold" style={{ color: getHealthColor(value) }}>{HEALTH_STATUS_LABELS[value] || '未知'}</div></div>;
             })}
           </div>
         </Section>
@@ -64,7 +64,7 @@ export function DeviceDetailPanel() {
         <Section title={`历史告警 (${detail?.alerts.length ?? 0})`}>
           {loading && <div className="text-[12px] text-[#5A7A92]">读取历史记录...</div>}
           {!loading && !detail?.alerts.length && <div className="text-[12px] text-[#5A7A92]">暂无已上报告警</div>}
-          {detail?.alerts.slice(0, 5).map((alert) => <div key={alert.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{alert.message}</div><div className="text-[#5A7A92]">{new Date(alert.created_at).toLocaleString()} · {alert.status}</div></div>)}
+           {detail?.alerts.slice(0, 5).map((alert) => <div key={alert.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{formatUserMessage(alert.message)}</div><div className="text-[#5A7A92]">{new Date(alert.created_at).toLocaleString()} · {ALERT_STATUS_LABELS[alert.status] || '未知状态'}</div></div>)}
         </Section>
 
         <Section title={`轨迹回放 (${trajectory.length})`}>
@@ -74,7 +74,7 @@ export function DeviceDetailPanel() {
 
         <Section title={`任务执行 (${detail?.executions.length ?? 0})`}>
           {!detail?.executions.length && <div className="text-[12px] text-[#5A7A92]">暂无任务执行记录</div>}
-          {detail?.executions.slice(0, 4).map((execution) => <div key={execution.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{execution.task_code} · {execution.task_name}</div><div className="text-[#5A7A92]">{execution.state} · {Math.round(execution.progress)}%</div></div>)}
+           {detail?.executions.slice(0, 4).map((execution) => <div key={execution.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{execution.task_code} · {execution.task_name}</div><div className="text-[#5A7A92]">{MISSION_STATE_LABELS[execution.state] || '未知状态'} · {Math.round(execution.progress)}%</div></div>)}
         </Section>
 
         <div className="mt-4 flex gap-2">

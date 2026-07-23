@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,12 +22,12 @@ MAX_POINTS_PER_SNAPSHOT = 50_000
 
 
 class PointCloudSnapshotIn(BaseModel):
-    event_id: str = Field(min_length=1, max_length=96)
-    source_id: str = Field(min_length=1, max_length=96)
-    frame_id: str = Field(default="map", min_length=1, max_length=64)
-    observed_at: datetime
-    points: list[list[float]] = Field(min_length=1, max_length=MAX_POINTS_PER_SNAPSHOT)
-    metadata: dict = Field(default_factory=dict)
+    event_id: str = Field(description="上游点云源生成的幂等事件标识；重复提交同一标识不会重复入库", min_length=1, max_length=96)
+    source_id: str = Field(description="产生点云的机器人、传感器、SLAM 节点或 Gazebo 桥接器标识", min_length=1, max_length=96)
+    frame_id: str = Field(description="点坐标使用的坐标系标识", default="map", min_length=1, max_length=64)
+    observed_at: datetime = Field(description="点云快照的采集时间，使用带时区的 ISO 8601 时间")
+    points: list[list[float]] = Field(description=f"点云坐标数组，每个点必须为 [x, y, z]，单次最多 {MAX_POINTS_PER_SNAPSHOT} 个点", min_length=1, max_length=MAX_POINTS_PER_SNAPSHOT)
+    metadata: dict = Field(description="点云源附带的扩展元数据，字段由设备接入协议约定", default_factory=dict)
 
     @field_validator("points")
     @classmethod
@@ -45,9 +46,15 @@ def _snapshot_dict(snapshot: PointCloudSnapshot) -> dict:
     }
 
 
-@router.post("/gateway/snapshots")
+@router.post(
+    "/gateway/snapshots",
+    summary="上传点云快照",
+    description="供机器人、SLAM 节点或 Gazebo 桥接器上传一帧真实点云。接口按事件标识幂等，成功入库后通过实时通道发布该快照；调用时必须提供有效的设备网关 API 密钥。",
+    response_description="点云快照接收结果；重复事件会返回已有快照标识",
+    openapi_extra={"requestBody": {"description": "外部点云源采集的一帧三维点云快照"}},
+)
 async def ingest_snapshot(
-    req: PointCloudSnapshotIn,
+    req: Annotated[PointCloudSnapshotIn, Body(description="外部点云源采集的一帧三维点云快照")],
     db: AsyncSession = Depends(get_db),
     _gateway: None = Depends(require_gateway_api_key),
 ) -> dict:
@@ -65,7 +72,12 @@ async def ingest_snapshot(
     return {"ok": True, "snapshot_id": str(snapshot.id), "points_count": len(snapshot.points)}
 
 
-@router.get("/latest")
+@router.get(
+    "/latest",
+    summary="获取最新点云快照",
+    description="按采集时间查询数据库中最新的一帧点云快照；尚无真实点云数据时返回 has_data=false。调用方需要具备读取权限。",
+    response_description="最新点云快照，或明确的无数据状态",
+)
 async def latest_snapshot(db: AsyncSession = Depends(get_db), _role=Depends(require("read"))) -> dict:
     snapshot = await db.scalar(select(PointCloudSnapshot).order_by(PointCloudSnapshot.observed_at.desc()).limit(1))
     if snapshot is None:
@@ -73,7 +85,12 @@ async def latest_snapshot(db: AsyncSession = Depends(get_db), _role=Depends(requ
     return {"has_data": True, **_snapshot_dict(snapshot)}
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    summary="获取点云数据状态",
+    description="返回最新点云来源、是否已有数据、点数和更新时间，不生成或补充任何模拟点云。调用方需要具备读取权限。",
+    response_description="当前点云数据源和最新快照状态",
+)
 async def status(db: AsyncSession = Depends(get_db), _role=Depends(require("read"))) -> dict:
     snapshot = await db.scalar(select(PointCloudSnapshot).order_by(PointCloudSnapshot.observed_at.desc()).limit(1))
     return {

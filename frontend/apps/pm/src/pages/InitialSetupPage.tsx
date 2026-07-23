@@ -23,8 +23,8 @@ export function InitialSetupPage({ onInitialized }: { onInitialized: () => void 
   };
   const fields: Array<[keyof typeof form, string, string]> = [
     ['token', '初始化令牌', 'password'], ['project_code', '项目编码', 'text'], ['project_name', '项目名称', 'text'], ['location', '项目位置', 'text'],
-    ['om_username', 'O&M 用户名', 'text'], ['om_display_name', 'O&M 显示名称', 'text'], ['om_password', 'O&M 密码（至少 12 位）', 'password'],
-    ['pm_username', 'PM 用户名', 'text'], ['pm_display_name', 'PM 显示名称', 'text'], ['pm_password', 'PM 密码（至少 12 位）', 'password'],
+    ['om_username', '运维端用户名', 'text'], ['om_display_name', '运维端显示名称', 'text'], ['om_password', '运维端密码（至少 12 位）', 'password'],
+    ['pm_username', '项目管理端用户名', 'text'], ['pm_display_name', '项目管理端显示名称', 'text'], ['pm_password', '项目管理端密码（至少 12 位）', 'password'],
   ];
   return <div className="min-h-full overflow-y-auto bg-[#050B13] p-8 text-[#E6F6FF]"><form onSubmit={submit} className="mx-auto grid max-w-3xl grid-cols-2 gap-4 rounded-lg border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.95)] p-6">
     <h1 className="col-span-2 text-[20px] font-bold">项目初始化</h1>

@@ -27,7 +27,7 @@ export function LeftColumn() {
       setBackupState('success');
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      setBackupState(message.includes('501') ? 'unavailable' : 'error');
+      setBackupState(message.includes('当前部署尚未配置') ? 'unavailable' : 'error');
     }
   };
 

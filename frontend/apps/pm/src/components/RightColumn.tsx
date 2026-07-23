@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Camera, TrendingUp, Loader2 } from 'lucide-react';
 import { Panel, EventFeed, ProgressBar } from '@robots/ui';
 import { usePmStore } from '../stores/pmStore';
-import { COLORS, formatDateTime } from '@robots/utils';
+import { COLORS, formatDateTime, formatDisplayValue, formatUnit, STAGE_LABELS } from '@robots/utils';
 import { createTask, getPoints } from '@robots/api-client';
 import type { MapPoint, ProcessOption } from '@robots/shared-types';
 
@@ -48,7 +48,7 @@ export function RightColumn() {
                   {t.status === 'running' && <span className="rounded bg-[rgba(47,215,255,0.2)] px-1 text-[9px] text-[#2FD7FF]">进行中</span>}
                   {t.status === 'paused' && <span className="rounded bg-[rgba(255,179,61,0.2)] px-1 text-[9px] text-[#FFB33D]">已暂停</span>}
                   {t.deliverable_qty && (
-                    <span className="text-[9px] text-[#79A3BF]">交付: {t.deliverable_qty}{t.deliverable_unit}</span>
+                    <span className="text-[9px] text-[#79A3BF]">交付：{t.deliverable_qty}{formatUnit(t.deliverable_unit)}</span>
                   )}
                 </div>
                 {t.planned_start && (
@@ -64,7 +64,7 @@ export function RightColumn() {
       </Panel>
 
       {/* 摄像头 AI 检测摘要 */}
-      <Panel title="摄像头 AI 检测" className="shrink-0" actions={<span className="text-[10px] text-[#5A7A92]">{camera?.code || '无摄像头'}</span>}>
+      <Panel title="摄像头人工智能检测" className="shrink-0" actions={<span className="text-[10px] text-[#5A7A92]">{camera?.code || '无摄像头'}</span>}>
         <div className="relative h-32 overflow-hidden rounded border border-[rgba(91,183,255,0.15)] bg-[#0A1521]">
           <div className="flex h-full items-center justify-center text-[#5A7A92]">
             <Camera size={32} />
@@ -76,12 +76,12 @@ export function RightColumn() {
           {/* AI识别浮窗 */}
           {camera?.latest_detection ? (
             <div className="absolute right-2 bottom-2 rounded border border-[rgba(47,215,255,0.3)] bg-[rgba(9,25,41,0.8)] p-1.5 text-[9px]">
-              <div className="text-[#2FD7FF] font-medium mb-0.5">AI识别</div>
+              <div className="text-[#2FD7FF] font-medium mb-0.5">人工智能识别</div>
               <div className="text-[#aecce0]">挖机: {camera.latest_detection.excavator_count}</div>
               <div className="text-[#aecce0]">渣土车: {camera.latest_detection.truck_count}</div>
               <div className="text-[#aecce0]">人员: {camera.latest_detection.person_count}</div>
-              <div className="text-[#34DF9A]">扬尘: {camera.latest_detection.dust_level}</div>
-              <div className="text-[#aecce0]">边坡: {camera.latest_detection.slope_risk}</div>
+              <div className="text-[#34DF9A]">扬尘：{formatDisplayValue(camera.latest_detection.dust_level, '无数据')}</div>
+              <div className="text-[#aecce0]">边坡：{formatDisplayValue(camera.latest_detection.slope_risk, '无数据')}</div>
             </div>
           ) : (
             <div className="absolute right-2 bottom-2 text-[9px] text-[#5A7A92]">无识别数据</div>
@@ -249,7 +249,7 @@ function TaskPublishModal({ processes, onClose, onCreated }: TaskPublishModalPro
             >
               {processes.length === 0 && <option value="">加载中...</option>}
               {processes.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}（{p.stage}）</option>
+                <option key={p.id} value={p.id}>{p.name}（{STAGE_LABELS[p.stage] || '未知阶段'}）</option>
               ))}
             </select>
           </div>
@@ -292,7 +292,7 @@ function TaskPublishModal({ processes, onClose, onCreated }: TaskPublishModalPro
             <div className="flex items-center gap-2">
               <input type="number" value={deliverableQty} onChange={(e) => setDeliverableQty(e.target.value)} placeholder="如：500"
                 className="flex-1 rounded border border-[rgba(91,183,255,0.3)] bg-[#0A1521] px-3 py-1.5 text-[#E6F6FF] outline-none focus:border-[#2FD7FF]" />
-              <span className="w-16 text-[#aecce0]">{deliverableUnit}</span>
+               <span className="w-16 text-[#aecce0]">{formatUnit(deliverableUnit)}</span>
             </div>
             <span className="text-[10px] text-[#5A7A92]">该工序完成后应交付的量化结果</span>
           </div>

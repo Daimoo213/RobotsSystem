@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import A4
@@ -30,11 +30,16 @@ def _parse_date(value: str | None, field: str) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-@router.post("/export")
+@router.post(
+    "/export",
+    summary="导出 Excel 运行报表",
+    description="按可选时间范围查询真实设备、任务、执行记录和告警，并生成多工作表 XLSX 文件。",
+    response_description="可下载的 Excel 文件流。",
+)
 async def export_report(
-    report_type: str = "summary",
-    date_from: str | None = None,
-    date_to: str | None = None,
+    report_type: str = Query(default="summary", description="报表类型标签，用于生成下载文件名；当前内容为完整运行汇总。"),
+    date_from: str | None = Query(default=None, description="统计起始日期或时间，ISO 8601 格式，包含该时刻。"),
+    date_to: str | None = Query(default=None, description="统计结束日期或时间，ISO 8601 格式，包含该时刻且不得早于起始时间。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("report.export")),
 ) -> StreamingResponse:
@@ -149,10 +154,15 @@ async def export_report(
     )
 
 
-@router.post("/export-pdf")
+@router.post(
+    "/export-pdf",
+    summary="导出 PDF 汇总报表",
+    description="按可选时间范围统计真实项目、任务、设备和告警总量，并生成简明 PDF 文件。",
+    response_description="可下载的 PDF 文件流。",
+)
 async def export_pdf_report(
-    date_from: str | None = None,
-    date_to: str | None = None,
+    date_from: str | None = Query(default=None, description="统计起始日期或时间，ISO 8601 格式，包含该时刻。"),
+    date_to: str | None = Query(default=None, description="统计结束日期或时间，ISO 8601 格式，包含该时刻且不得早于起始时间。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("report.export")),
 ) -> StreamingResponse:

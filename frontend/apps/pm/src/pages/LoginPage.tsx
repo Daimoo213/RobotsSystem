@@ -20,10 +20,10 @@ export function LoginPage() {
         <div className="mb-6 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg font-mono text-xl font-black text-[#07111C]"
             style={{ background: 'linear-gradient(135deg, #2FD7FF, #34DF9A)', boxShadow: '0 0 24px rgba(47,215,255,0.4)' }}>
-            R
+            机
           </div>
           <h1 className="text-[20px] font-bold text-[#E6F6FF]">机器人集群智能调度系统</h1>
-          <p className="mt-1 text-[12px] text-[#79A3BF]">PM端 · 施工进度指挥端</p>
+          <p className="mt-1 text-[12px] text-[#79A3BF]">项目管理端 · 施工进度指挥端</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

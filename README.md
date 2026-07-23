@@ -17,7 +17,7 @@ py -3.10 manager\manager.py start all
 py -3.10 manager\manager.py status
 ```
 
-也可双击 `manager/start_manager.bat` 使用桌面管理器。开发服务只监听本机：后端 `8000`、PM `5173`、O&M `5174`。停止命令：
+也可双击 `manager/start_manager.bat` 使用桌面管理器。开发服务监听 Windows 私有局域网：后端 `8000`、PM `5173`、O&M `5174`；PostgreSQL 与 Redis 仍只监听 `127.0.0.1`。停止命令：
 
 ```powershell
 py -3.10 manager\manager.py stop all
@@ -76,5 +76,7 @@ pnpm build
 - [部署与运维手册](docs/部署与运维手册.md)
 - [本机项目阶段报告](docs/本机项目阶段报告.md)
 - [设备开发与接入规范](docs/设备开发与接入规范.md)
+- [机器人设备项目开发需求说明书](docs/机器人设备项目开发需求说明书.md)
+- [机器人设备本机常驻运行系统开发提示词](docs/机器人设备本机常驻运行系统开发提示词.md)
 - [设备网关协议](docs/DEVICE_GATEWAY_API.md)
 - [版本发布与升级](docs/版本发布与升级.md)

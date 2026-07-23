@@ -7,6 +7,8 @@ interface EstopOverlayProps {
   onRecover?: () => void;
 }
 
+const ESTOP_SOURCE_LABELS: Record<string, string> = { pm: '项目管理端', om: '运维端', safety: '安全系统', system: '系统' };
+
 export function EstopOverlay({ active, source, canRecover, onRecover }: EstopOverlayProps) {
   if (!active) return null;
   return (
@@ -22,7 +24,7 @@ export function EstopOverlay({ active, source, canRecover, onRecover }: EstopOve
           全局急停已触发
         </div>
         <div className="mt-3 text-[16px] text-[#E6F6FF]">所有设备已停止运行</div>
-        <div className="mt-2 text-[13px] text-[#79A3BF]">来源: {source || '未知'}</div>
+        <div className="mt-2 text-[13px] text-[#79A3BF]">来源：{source ? ESTOP_SOURCE_LABELS[source] || '其他来源' : '未知'}</div>
         {canRecover ? (
           <button
             onClick={onRecover}
@@ -31,7 +33,7 @@ export function EstopOverlay({ active, source, canRecover, onRecover }: EstopOve
             恢复运行
           </button>
         ) : (
-          <div className="mt-6 text-[14px] text-[#FFB33D]">请联系 O&M 端执行恢复</div>
+          <div className="mt-6 text-[14px] text-[#FFB33D]">请联系运维端执行恢复</div>
         )}
       </div>
       <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.6} }`}</style>

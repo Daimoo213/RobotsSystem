@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,10 +19,15 @@ from app.core.redis import CHANNEL_ALERTS
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="查询告警列表",
+    description="按告警级别和处理状态筛选数据库中的最近 100 条真实告警，结果按创建时间倒序排列。",
+    response_description="符合筛选条件的告警记录列表。",
+)
 async def list_alerts(
-    level: str | None = None,
-    status_filter: str | None = Query(None, alias="status"),
+    level: str | None = Query(default=None, description="告警级别，例如 info、warning 或 critical。"),
+    status_filter: str | None = Query(default=None, alias="status", description="处理状态，例如 open、ack 或 resolved。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> list[dict]:
@@ -35,9 +40,14 @@ async def list_alerts(
     return [_alert_dict(a) for a in result.scalars().all()]
 
 
-@router.post("/{alert_id}/acknowledge")
+@router.post(
+    "/{alert_id}/acknowledge",
+    summary="确认告警",
+    description="将指定 open 告警标记为 ack，并将更新后的告警广播给已连接客户端。",
+    response_description="确认结果和更新后的告警记录。",
+)
 async def acknowledge_alert(
-    alert_id: uuid.UUID,
+    alert_id: uuid.UUID = Path(description="要确认的告警 UUID。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("alert.acknowledge")),
 ) -> dict:

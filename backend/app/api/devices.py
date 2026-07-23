@@ -7,9 +7,9 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,10 @@ def _now() -> datetime:
 
 
 async def require_gateway_api_key(
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(
+        default=None,
+        description="设备接入网关共享 API 密钥，对应服务端 DEVICE_GATEWAY_API_KEY 配置。",
+    ),
 ) -> None:
     """Authenticate a robot gateway without sharing operator JWT credentials."""
     if not settings.device_gateway_api_key:
@@ -46,34 +49,39 @@ async def require_gateway_api_key(
 
 
 class GatewayPosition(BaseModel):
-    x: float
-    y: float
-    z: float = 0.0
+    x: float = Field(description="地图坐标系中的 X 坐标，单位为米。")
+    y: float = Field(description="地图坐标系中的 Y 坐标，单位为米。")
+    z: float = Field(default=0.0, description="地图坐标系中的 Z 坐标，单位为米。")
 
 
 class GatewayRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=1, max_length=32)
-    name: str = Field(min_length=1, max_length=64)
-    type: str = Field(min_length=1, max_length=32)
-    model: str | None = Field(default=None, max_length=64)
-    capabilities: dict[str, Any] = Field(default_factory=dict)
-    section_tags: dict[str, Any] = Field(default_factory=dict)
-    permissions: dict[str, Any] = Field(default_factory=dict)
-    section_id: str | None = Field(default=None, max_length=32)
-    health: dict[str, Any] = Field(default_factory=dict)
-    protocol_version: str = Field(default="v1", max_length=32)
+    code: str = Field(min_length=1, max_length=32, description="设备唯一编码；注册后作为网关接口中的 device_code 使用。")
+    name: str = Field(min_length=1, max_length=64, description="设备显示名称。")
+    type: str = Field(min_length=1, max_length=32, description="设备类型编码，用于调度匹配和设备筛选。")
+    model: str | None = Field(default=None, max_length=64, description="设备厂商型号；未知时可省略。")
+    capabilities: dict[str, Any] = Field(
+        default_factory=dict,
+        description="设备能力声明；支持的工序可通过 processes 字符串数组提供。",
+    )
+    section_tags: dict[str, Any] = Field(default_factory=dict, description="设备所属区域或业务分组标签。")
+    permissions: dict[str, Any] = Field(default_factory=dict, description="设备侧声明的操作权限或限制条件。")
+    section_id: str | None = Field(default=None, max_length=32, description="设备当前所属施工区域编码。")
+    health: dict[str, Any] = Field(default_factory=dict, description="设备注册时上报的真实健康状态。")
+    protocol_version: str = Field(default="v1", max_length=32, description="设备网关协议版本。")
 
 
 class GatewayMissionUpdate(BaseModel):
-    execution_id: str = Field(min_length=1, max_length=96)
-    state: Literal["accepted", "running", "paused", "completed", "failed", "cancelled"]
-    progress: float | None = Field(default=None, ge=0, le=100)
-    completed_qty: float | None = Field(default=None, ge=0)
-    result: dict[str, Any] | None = None
-    failure_code: str | None = Field(default=None, max_length=96)
-    estimated_completion_at: datetime | None = None
+    execution_id: str = Field(min_length=1, max_length=96, description="任务下发命令中携带的执行实例标识。")
+    state: Literal["accepted", "running", "paused", "completed", "failed", "cancelled"] = Field(
+        description="设备确认的任务执行状态。"
+    )
+    progress: float | None = Field(default=None, ge=0, le=100, description="任务执行进度百分比，范围 0 至 100。")
+    completed_qty: float | None = Field(default=None, ge=0, description="已完成工作量，单位沿用对应任务的交付单位。")
+    result: dict[str, Any] | None = Field(default=None, description="任务完成或终止时的结构化执行结果。")
+    failure_code: str | None = Field(default=None, max_length=96, description="任务失败原因编码；非失败状态可省略。")
+    estimated_completion_at: datetime | None = Field(default=None, description="设备预计完成时间，使用带时区的 ISO 8601 时间。")
 
 
 class GatewayOperationalMetrics(BaseModel):
@@ -83,12 +91,12 @@ class GatewayOperationalMetrics(BaseModel):
     sets. Omitted values are never estimated by the control plane.
     """
 
-    power_kw: float | None = Field(default=None, ge=0)
-    energy_kwh_total: float | None = Field(default=None, ge=0)
-    mileage_km_total: float | None = Field(default=None, ge=0)
-    runtime_hours_total: float | None = Field(default=None, ge=0)
-    payload_ratio: float | None = Field(default=None, ge=0, le=1)
-    localization_drift_meters: float | None = Field(default=None, ge=0)
+    power_kw: float | None = Field(default=None, ge=0, description="设备当前实测功率，单位为 kW。")
+    energy_kwh_total: float | None = Field(default=None, ge=0, description="设备累计实测能耗，单位为 kWh。")
+    mileage_km_total: float | None = Field(default=None, ge=0, description="设备累计行驶里程，单位为 km。")
+    runtime_hours_total: float | None = Field(default=None, ge=0, description="设备累计运行时长，单位为小时。")
+    payload_ratio: float | None = Field(default=None, ge=0, le=1, description="设备当前载荷率，范围 0 至 1。")
+    localization_drift_meters: float | None = Field(default=None, ge=0, description="设备当前定位漂移量，单位为米。")
 
 
 class GatewayTelemetry(BaseModel):
@@ -96,37 +104,39 @@ class GatewayTelemetry(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    event_id: str = Field(min_length=1, max_length=96)
-    boot_id: str = Field(min_length=1, max_length=96)
-    sequence: int = Field(ge=0)
-    frame_id: str = Field(default="map", min_length=1, max_length=64)
-    schema_version: str = Field(default="v1", min_length=1, max_length=32)
-    status: str | None = Field(default=None, min_length=1, max_length=16)
-    battery: float | None = Field(default=None, ge=0, le=100)
-    position: GatewayPosition | None = None
-    section_id: str | None = Field(default=None, max_length=32)
-    health: dict[str, Any] | None = None
-    metrics: GatewayOperationalMetrics | None = None
-    observed_at: datetime | None = None
-    mission: GatewayMissionUpdate | None = None
+    event_id: str = Field(min_length=1, max_length=96, description="遥测事件幂等标识；同一设备重复上报相同值时不会重复写入。")
+    boot_id: str = Field(min_length=1, max_length=96, description="设备本次启动实例标识；每次设备或网关重启后应更换。")
+    sequence: int = Field(ge=0, description="本次启动实例内单调递增的遥测序号。")
+    frame_id: str = Field(default="map", min_length=1, max_length=64, description="position 坐标采用的坐标系名称。")
+    schema_version: str = Field(default="v1", min_length=1, max_length=32, description="遥测数据结构版本。")
+    status: str | None = Field(default=None, min_length=1, max_length=16, description="设备当前运行状态编码。")
+    battery: float | None = Field(default=None, ge=0, le=100, description="设备剩余电量百分比，范围 0 至 100。")
+    position: GatewayPosition | None = Field(default=None, description="设备在指定坐标系中的当前位置。")
+    section_id: str | None = Field(default=None, max_length=32, description="设备当前所在施工区域编码。")
+    health: dict[str, Any] | None = Field(default=None, description="设备真实健康检查结果；未提供的指标不会由服务端推测。")
+    metrics: GatewayOperationalMetrics | None = Field(default=None, description="设备实测运行指标。")
+    observed_at: datetime | None = Field(default=None, description="设备采样时间，使用带时区的 ISO 8601 时间；省略时以服务端接收时间为准。")
+    mission: GatewayMissionUpdate | None = Field(default=None, description="当前任务执行状态更新；无执行任务时可省略。")
 
 
 class GatewayCommandAck(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    status: Literal["acknowledged", "failed"]
-    message: str | None = Field(default=None, max_length=512)
+    status: Literal["acknowledged", "failed"] = Field(
+        description="命令处理结果：acknowledged 表示设备已成功处理命令，failed 表示处理失败；任务实际状态仍以 mission 遥测为准。"
+    )
+    message: str | None = Field(default=None, max_length=512, description="设备返回的执行结果或失败原因说明。")
 
 
 class GatewayCalibrationReport(BaseModel):
-    event_id: str = Field(min_length=1, max_length=96)
-    qrcode_id: str | None = Field(default=None, max_length=96)
-    source: Literal["automatic", "manual"]
-    observed_at: datetime
-    success: bool
-    position: GatewayPosition | None = None
-    drift_meters: float | None = Field(default=None, ge=0)
-    message: str | None = Field(default=None, max_length=512)
+    event_id: str = Field(min_length=1, max_length=96, description="校准事件幂等标识。")
+    qrcode_id: str | None = Field(default=None, max_length=96, description="自动校准使用的二维码或定位标记标识。")
+    source: Literal["automatic", "manual"] = Field(description="校准来源：automatic 为设备自动校准，manual 为人工触发校准。")
+    observed_at: datetime = Field(description="设备完成校准的时间，使用带时区的 ISO 8601 时间。")
+    success: bool = Field(description="校准是否成功。")
+    position: GatewayPosition | None = Field(default=None, description="校准成功后设备确认的实际位置。")
+    drift_meters: float | None = Field(default=None, ge=0, description="校准前检测到的定位漂移量，单位为米。")
+    message: str | None = Field(default=None, max_length=512, description="校准结果或失败原因说明。")
 
 
 async def _gateway_device(db: AsyncSession, device_code: str) -> Device:
@@ -314,11 +324,22 @@ async def _publish_device_snapshot(db: AsyncSession) -> None:
         return
 
 
-@router.post("/gateway/register")
+@router.post(
+    "/gateway/register",
+    summary="注册或更新机器人设备",
+    description=(
+        "首次注册使用系统级设备网关密钥；成功后仅在本次响应中返回设备专属密钥。"
+        "已注册设备再次调用时必须使用该设备的专属密钥。"
+    ),
+    response_description="返回注册结果、设备当前信息，以及首次注册时生成的设备专属密钥。",
+)
 async def register_gateway_device(
-    req: GatewayRegistration,
+    req: Annotated[GatewayRegistration, Body(description="机器人设备注册信息和能力声明。")],
     db: AsyncSession = Depends(get_db),
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(
+        default=None,
+        description="首次注册时填写系统级设备网关密钥；更新已注册设备时填写该设备的专属密钥。",
+    ),
 ) -> dict:
     """Enroll one device, then require its bound credential for later updates."""
     result = await db.execute(select(Device).where(Device.code == req.code))
@@ -373,12 +394,20 @@ async def register_gateway_device(
     }
 
 
-@router.post("/gateway/{device_code}/telemetry")
+@router.post(
+    "/gateway/{device_code}/telemetry",
+    summary="上报机器人遥测数据",
+    description=(
+        "接收真实机器人或外部仿真桥接程序上报的心跳、位置、电量、健康状态、运行指标及任务进度。"
+        "event_id 用于幂等去重，sequence 必须在同一 boot_id 内单调递增。"
+    ),
+    response_description="返回遥测接收结果、设备最新状态、急停状态及关联的任务执行标识。",
+)
 async def report_gateway_telemetry(
-    device_code: str,
-    req: GatewayTelemetry,
+    device_code: Annotated[str, Path(description="已注册设备的唯一编码。")],
+    req: Annotated[GatewayTelemetry, Body(description="机器人本次采样的遥测、健康状态和任务执行信息。")],
     db: AsyncSession = Depends(get_db),
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(default=None, description="设备首次注册时获得的专属网关密钥。"),
 ) -> dict:
     """Persist a device heartbeat and the latest operational state."""
     device = await _require_device_key(db, device_code, x_device_gateway_key)
@@ -462,12 +491,20 @@ async def report_gateway_telemetry(
     return {"ok": True, "device": _device_dict(device), "global_estop_active": estop_active, "execution_id": execution.gateway_execution_id if execution else None}
 
 
-@router.post("/gateway/{device_code}/calibration")
+@router.post(
+    "/gateway/{device_code}/calibration",
+    summary="上报机器人定位校准结果",
+    description=(
+        "记录机器人自动或人工定位校准的真实结果。校准成功且包含位置时更新设备位置；"
+        "漂移量达到配置阈值时生成定位告警。"
+    ),
+    response_description="返回校准记录接收结果和对应设备标识。",
+)
 async def report_gateway_calibration(
-    device_code: str,
-    req: GatewayCalibrationReport,
+    device_code: Annotated[str, Path(description="已注册设备的唯一编码。")],
+    req: Annotated[GatewayCalibrationReport, Body(description="机器人定位校准的实际执行结果。")],
     db: AsyncSession = Depends(get_db),
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(default=None, description="设备首次注册时获得的专属网关密钥。"),
 ) -> dict:
     """Record the outcome of a real QR/manual localization correction."""
 
@@ -506,9 +543,14 @@ async def report_gateway_calibration(
     return {"ok": True, "device_id": str(device.id)}
 
 
-@router.post("/{device_id}/calibrate")
+@router.post(
+    "/{device_id}/calibrate",
+    summary="请求机器人执行人工定位校准",
+    description="为指定设备写入 reset_pose 命令。响应表示命令已进入持久化队列，不表示设备已经完成校准。",
+    response_description="返回入队结果、设备 UUID、命令 UUID 和投递状态。",
+)
 async def request_manual_calibration(
-    device_id: uuid.UUID,
+    device_id: Annotated[uuid.UUID, Path(description="目标设备的 UUID。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("device.command")),
 ) -> dict:
@@ -529,11 +571,19 @@ async def request_manual_calibration(
     return {"ok": True, "device_id": str(device.id), "command_id": str(queued.id), "delivery": "queued"}
 
 
-@router.get("/gateway/{device_code}/commands")
+@router.get(
+    "/gateway/{device_code}/commands",
+    summary="拉取待执行机器人命令",
+    description=(
+        "供设备网关轮询尚未确认的有效命令。命令在设备提交 ACK 前会被重复返回，"
+        "设备应以 command_id 保证本地执行幂等。"
+    ),
+    response_description="返回设备编码、全局急停状态和待执行命令列表。",
+)
 async def pull_gateway_commands(
-    device_code: str,
+    device_code: Annotated[str, Path(description="已注册设备的唯一编码。")],
     db: AsyncSession = Depends(get_db),
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(default=None, description="设备首次注册时获得的专属网关密钥。"),
 ) -> dict:
     """Return every unacknowledged command; repeated delivery is intentional until ACK."""
     device = await _require_device_key(db, device_code, x_device_gateway_key)
@@ -573,13 +623,21 @@ async def pull_gateway_commands(
     }
 
 
-@router.post("/gateway/{device_code}/commands/{command_id}/ack")
+@router.post(
+    "/gateway/{device_code}/commands/{command_id}/ack",
+    summary="确认机器人命令执行结果",
+    description=(
+        "由设备网关提交命令成功或失败结果。完全相同的终态确认可幂等重试；"
+        "同一命令提交不同终态结果会返回冲突。"
+    ),
+    response_description="返回确认处理结果、命令 UUID 和最终状态。",
+)
 async def acknowledge_gateway_command(
-    device_code: str,
-    command_id: uuid.UUID,
-    req: GatewayCommandAck,
+    device_code: Annotated[str, Path(description="已注册设备的唯一编码。")],
+    command_id: Annotated[uuid.UUID, Path(description="待确认命令的 UUID。")],
+    req: Annotated[GatewayCommandAck, Body(description="机器人对指定命令的最终执行确认。")],
     db: AsyncSession = Depends(get_db),
-    x_device_gateway_key: str | None = Header(default=None),
+    x_device_gateway_key: str | None = Header(default=None, description="设备首次注册时获得的专属网关密钥。"),
 ) -> dict:
     """Record device execution outcome for an outbound command."""
     device = await _require_device_key(db, device_code, x_device_gateway_key)
@@ -609,10 +667,15 @@ async def acknowledge_gateway_command(
     return {"ok": True, "command_id": str(command.id), "status": command.status}
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="查询机器人设备列表",
+    description="查询系统中已注册的设备，可按当前状态和设备类型同时筛选。",
+    response_description="返回符合筛选条件的设备列表。",
+)
 async def list_devices(
-    status_filter: str | None = Query(None, alias="status"),
-    type_filter: str | None = Query(None, alias="type"),
+    status_filter: str | None = Query(None, alias="status", description="设备状态编码；省略时不按状态筛选。"),
+    type_filter: str | None = Query(None, alias="type", description="设备类型编码；省略时不按类型筛选。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> list[dict]:
@@ -626,9 +689,14 @@ async def list_devices(
     return [_device_dict(d) for d in result.scalars().all()]
 
 
-@router.get("/{device_id}")
+@router.get(
+    "/{device_id}",
+    summary="查询机器人设备基本信息",
+    description="按设备 UUID 查询注册信息、当前状态、位置、能力和最近心跳等基本信息。",
+    response_description="返回指定设备的当前基本信息。",
+)
 async def get_device(
-    device_id: uuid.UUID,
+    device_id: Annotated[uuid.UUID, Path(description="目标设备的 UUID。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> dict:
@@ -639,11 +707,16 @@ async def get_device(
     return _device_dict(d)
 
 
-@router.get("/{device_id}/detail")
+@router.get(
+    "/{device_id}/detail",
+    summary="查询机器人设备运行详情",
+    description="查询指定时间范围内的真实遥测轨迹，并返回该设备的告警和任务执行历史。",
+    response_description="返回设备信息、遥测轨迹、告警列表和任务执行记录。",
+)
 async def get_device_detail(
-    device_id: uuid.UUID,
-    hours: int = Query(24, ge=1, le=168),
-    limit: int = Query(500, ge=1, le=2000),
+    device_id: Annotated[uuid.UUID, Path(description="目标设备的 UUID。")],
+    hours: int = Query(24, ge=1, le=168, description="遥测轨迹回溯时长，单位为小时，范围 1 至 168。"),
+    limit: int = Query(500, ge=1, le=2000, description="最多返回的遥测事件数量，范围 1 至 2000。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> dict:
@@ -706,23 +779,31 @@ async def get_device_detail(
 
 
 class CommandRequest(BaseModel):
-    command: Literal["pause", "resume", "estop", "reset", "release"]
-    device_id: uuid.UUID | None = None  # None = all devices
-    payload: dict[str, Any] = Field(default_factory=dict)
+    command: Literal["pause", "resume", "estop", "reset", "release"] = Field(description="控制命令类型。")
+    device_id: uuid.UUID | None = Field(default=None, description="兼容字段；提供时必须与 URL 路径中的设备 UUID 一致。")
+    payload: dict[str, Any] = Field(default_factory=dict, description="随命令下发的扩展参数；具体字段由设备接入协议约定。")
 
 
 class BatchCommandRequest(BaseModel):
-    command: Literal["pause", "resume", "estop", "reset", "release"]
-    section_id: str | None = None
-    device_type: str | None = None
-    process_id: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+    command: Literal["pause", "resume", "estop", "reset", "release"] = Field(description="批量下发的控制命令类型。")
+    section_id: str | None = Field(default=None, description="施工区域编码筛选；省略时覆盖全部区域。")
+    device_type: str | None = Field(default=None, description="设备类型编码筛选；省略时覆盖全部设备类型。")
+    process_id: str | None = Field(default=None, description="工序编码筛选，仅选择声明支持该工序的设备。")
+    payload: dict[str, Any] = Field(default_factory=dict, description="随命令下发给每台目标设备的扩展参数。")
 
 
-@router.post("/{device_id}/command")
+@router.post(
+    "/{device_id}/command",
+    summary="向单台机器人下发控制命令",
+    description=(
+        "将控制命令写入指定设备的持久化命令队列，等待设备网关拉取并确认。"
+        "响应表示入队成功，不表示机器人已经执行。"
+    ),
+    response_description="返回入队结果、目标设备、命令类型、命令 UUID 和投递状态。",
+)
 async def send_command(
-    device_id: uuid.UUID,
-    req: CommandRequest,
+    device_id: Annotated[uuid.UUID, Path(description="目标设备的 UUID。")],
+    req: Annotated[CommandRequest, Body(description="向单台机器人下发的控制命令和扩展参数。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("device.command")),
 ) -> dict:
@@ -750,9 +831,17 @@ async def send_command(
     }
 
 
-@router.post("/commands/batch")
+@router.post(
+    "/commands/batch",
+    summary="向机器人设备组批量下发命令",
+    description=(
+        "按施工区域、设备类型和支持工序的交集筛选已启用设备，并为每台设备创建独立的持久化命令。"
+        "响应表示命令已入队，不表示设备已经执行。"
+    ),
+    response_description="返回所有目标设备编码及其对应的命令 UUID。",
+)
 async def send_batch_command(
-    req: BatchCommandRequest,
+    req: Annotated[BatchCommandRequest, Body(description="批量控制命令、设备筛选条件和扩展参数。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("device.command")),
 ) -> dict:

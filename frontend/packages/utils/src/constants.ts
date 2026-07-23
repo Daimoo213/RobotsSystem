@@ -11,7 +11,7 @@ export const STAGES = [
 
 /** 设备类型标签 */
 export const DEVICE_TYPE_LABELS: Record<string, string> = {
-  agv: 'AGV运输车', excavator: '挖掘机', crane: '吊车',
+  agv: '自动运输车', excavator: '挖掘机', crane: '吊车',
   masonry: '砌筑机器人', inspect: '巡检机器人',
 };
 
@@ -19,6 +19,59 @@ export const DEVICE_TYPE_LABELS: Record<string, string> = {
 export const DEVICE_STATUS_LABELS: Record<string, string> = {
   idle: '待机', charging: '充电中', moving: '移动中',
   working: '作业中', paused: '已暂停', maintenance: '维护', occupancy: '维修占用', fault: '故障',
+  pending: '待处理', assigned: '已分配', ready: '就绪', offline: '离线',
+};
+
+/** 任务状态标签；接口内部仍使用英文编码。 */
+export const TASK_STATUS_LABELS: Record<string, string> = {
+  pending: '待开始', assigned: '已分配', running: '进行中', paused: '已暂停',
+  completed: '已完成', failed: '执行失败', cancelled: '已取消',
+};
+
+/** 任务执行状态标签。 */
+export const MISSION_STATE_LABELS: Record<string, string> = {
+  dispatched: '已下发', accepted: '已接受', running: '运行中', paused: '已暂停',
+  completed: '已完成', failed: '执行失败', cancelled: '已取消',
+  pause_requested: '暂停请求中', resume_requested: '恢复请求中', cancel_requested: '取消请求中',
+};
+
+/** 告警级别和处理状态标签。 */
+export const ALERT_LEVEL_LABELS: Record<string, string> = {
+  critical: '严重', warning: '警告', info: '提示',
+};
+export const ALERT_STATUS_LABELS: Record<string, string> = {
+  open: '未确认', ack: '已确认', resolved: '已解决',
+};
+
+/** 设备健康指标标签。 */
+export const HEALTH_STATUS_LABELS: Record<string, string> = {
+  ok: '正常', warn: '警告', fail: '故障', busy: '忙碌', unknown: '未知',
+};
+
+/** 实时事件类型标签。 */
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  alert: '告警', charging: '充电', sync: '同步', normal: '普通', update: '更新',
+  completed: '已完成', task_created: '任务已创建', task_assigned: '任务已分配',
+  task_completed: '任务已完成', task_reassigned: '任务已改派', task_paused: '任务已暂停',
+  task_resumed: '任务已恢复', task_deleted: '任务已删除',
+};
+
+/** 控制命令显示标签。 */
+export const COMMAND_LABELS: Record<string, string> = {
+  pause: '暂停', resume: '恢复', estop: '急停', release: '释放', reset: '重置',
+  reset_pose: '重置定位', mission_start: '开始任务', mission_pause: '暂停任务',
+  mission_resume: '恢复任务', mission_cancel: '取消任务',
+};
+
+/** 施工阶段显示标签。 */
+export const STAGE_LABELS: Record<string, string> = Object.fromEntries(
+  STAGES.map((stage) => [stage.value, stage.label]),
+);
+
+/** 常用计量单位显示标签。 */
+export const UNIT_LABELS: Record<string, string> = {
+  'm³': '立方米', m3: '立方米', t: '吨', m: '米', km: '千米', '㎡': '平方米',
+  '车次': '车次', '天': '天',
 };
 
 /** 设计系统颜色 */

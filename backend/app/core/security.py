@@ -7,7 +7,8 @@ from enum import Enum
 from typing import Any
 
 import jwt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_SECRET = settings.jwt_secret
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
+
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    bearerFormat="JWT",
+    description="操作员登录后获得的 JWT。调用受保护接口时使用：Authorization: Bearer <token>。",
+)
 
 
 def hash_password(password: str) -> str:
@@ -84,14 +91,11 @@ ROLE_PERMISSIONS: dict[str, set[Role]] = {
 
 
 async def get_current_user(
-    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Resolve an operator only from the Authorization bearer token."""
-    token = None
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:]
+    """Resolve an operator only from the documented Bearer JWT."""
+    token = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else None
     if not token:
         raise HTTPException(status_code=401, detail="未提供认证token")
 

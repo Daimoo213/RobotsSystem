@@ -1,7 +1,7 @@
 /** Alert bar — alert list item. */
 
 import type { Alert } from '@robots/shared-types';
-import { ALERT_LEVEL_COLORS, ALERT_STATUS_COLORS, formatDateTime } from '@robots/utils';
+import { ALERT_LEVEL_COLORS, ALERT_STATUS_COLORS, ALERT_STATUS_LABELS, formatDateTime, formatUserMessage } from '@robots/utils';
 import { Check } from 'lucide-react';
 
 interface AlertListProps {
@@ -36,16 +36,16 @@ export function AlertList({
             style={{ borderLeft: `3px solid ${levelColor}` }}
           >
             <div className="flex items-start justify-between gap-2">
-              <span className="text-[12px] text-[#E6F6FF]">{a.message}</span>
+              <span className="text-[12px] text-[#E6F6FF]">{formatUserMessage(a.message)}</span>
               <div className="flex shrink-0 items-center gap-1">
                 <span className="rounded px-1 text-[10px]" style={{ color: statusColor, backgroundColor: `${statusColor}22` }}>
-                  {a.status}
+                  {ALERT_STATUS_LABELS[a.status] || '未知状态'}
                 </span>
                 {onAcknowledge && a.status === 'open' && (
                   <button
                     type="button"
-                    title="Acknowledge alert"
-                    aria-label="Acknowledge alert"
+                    title="确认告警"
+                    aria-label="确认告警"
                     disabled={acknowledgingId === a.id}
                     onClick={(event) => {
                       event.stopPropagation();

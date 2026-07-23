@@ -37,7 +37,12 @@ from app.models.models import (
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-@router.get("/project")
+@router.get(
+    "/project",
+    summary="查询当前项目概况",
+    description="读取最近创建的启用项目；未初始化时明确返回 configured=false，不生成默认项目信息。",
+    response_description="当前项目编码、名称、地点、坐标系、时区和配置状态。",
+)
 async def get_project(
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
@@ -55,7 +60,12 @@ async def get_project(
     }
 
 
-@router.get("/kpi")
+@router.get(
+    "/kpi",
+    summary="查询项目 KPI",
+    description="从任务、设备和告警等数据库记录实时聚合项目进度、设备利用率、安全及质量指标。",
+    response_description="八项 KPI 的当前值、单位和变化信息。",
+)
 async def get_kpi(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -139,9 +149,14 @@ async def get_kpi(
     }
 
 
-@router.get("/trend")
+@router.get(
+    "/trend",
+    summary="查询任务完成趋势",
+    description="按日聚合指定天数内任务的计划完成数、实际完成数和预测走势。",
+    response_description="日期序列及 planned、actual、predicted 三组趋势数据。",
+)
 async def get_trend(
-    days: int = Query(7, description="趋势天数"),
+    days: int = Query(7, ge=1, le=90, description="向前统计的自然日数量，范围 1 至 90。"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
@@ -201,7 +216,12 @@ async def get_trend(
     }
 
 
-@router.get("/resource-load")
+@router.get(
+    "/resource-load",
+    summary="查询设备资源负载",
+    description="按设备类型统计设备总数、工作数量和真实负载率；无设备时返回空列表。",
+    response_description="各设备类型的数量和负载率。",
+)
 async def get_resource_load(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -254,7 +274,12 @@ async def get_resource_load(
     return loads
 
 
-@router.get("/energy")
+@router.get(
+    "/energy",
+    summary="查询真实能耗数据",
+    description="只聚合设备遥测实际上报的功率和累计能耗；缺失指标不会被估算或补值。",
+    response_description="能耗数据可用性、汇总值和设备级明细。",
+)
 async def get_energy_view(
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
@@ -283,7 +308,12 @@ async def get_energy_view(
     }
 
 
-@router.get("/safety")
+@router.get(
+    "/safety",
+    summary="查询安全状态",
+    description="读取数据库中的全局急停锁存状态以及仍处于 open 或 ack 的真实告警。",
+    response_description="全局安全状态、急停信息和活动告警列表。",
+)
 async def get_safety_view(
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
@@ -315,9 +345,14 @@ async def get_safety_view(
     }
 
 
-@router.get("/maintenance")
+@router.get(
+    "/maintenance",
+    summary="查询维护工单",
+    description="查询由设备实际累计运行时长或里程阈值触发的维护工单，可按工单状态筛选。",
+    response_description="维护工单及关联设备信息列表。",
+)
 async def get_maintenance_view(
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: str | None = Query(default=None, alias="status", description="工单状态，例如 open、ack 或 resolved。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> list[dict]:
@@ -337,7 +372,12 @@ async def get_maintenance_view(
     ]
 
 
-@router.get("/environment")
+@router.get(
+    "/environment",
+    summary="查询最新环境观测",
+    description="读取设备事件中最新一条 environment 记录；无真实观测时返回 has_data=false。",
+    response_description="环境数据可用性、观测时间和实际指标。",
+)
 async def get_environment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -392,7 +432,12 @@ async def get_environment(
     }
 
 
-@router.get("/health-score")
+@router.get(
+    "/health-score",
+    summary="查询设备集群健康分",
+    description="根据数据库中设备在线状态和健康字段计算当前集群健康比例。",
+    response_description="健康分、设备总数、健康设备数和数据可用性。",
+)
 async def get_health_score(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -426,7 +471,12 @@ async def get_health_score(
     }
 
 
-@router.get("/cameras")
+@router.get(
+    "/cameras",
+    summary="查询摄像头看板数据",
+    description="返回已注册摄像头及各摄像头最新一条外部视觉检测结果，不生成检测数据。",
+    response_description="摄像头基本信息和最新检测结果列表。",
+)
 async def get_cameras(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),

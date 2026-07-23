@@ -167,6 +167,7 @@ class MapRegion(Base):
     region_type: Mapped[str] = mapped_column(String(32))  # work/restricted/stack/parking
     polygon: Mapped[list] = mapped_column(JSONB, default=list)  # [[x,y],...]
     stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    color: Mapped[str] = mapped_column(String(7), default="#2FD7FF", server_default="#2FD7FF")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -185,6 +186,7 @@ class MapPoint(Base):
     stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     qrcode_id: Mapped[str | None] = mapped_column(String(96), nullable=True, unique=True)
     qrcode_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    color: Mapped[str] = mapped_column(String(7), default="#2FD7FF", server_default="#2FD7FF")
 
     # 关联
     tasks: Mapped[list["Task"]] = relationship(back_populates="map_point", lazy="dynamic")
@@ -211,10 +213,7 @@ class Camera(Base):
 
 
 class CameraDetection(Base):
-    """摄像头AI识别记录。每次识别写入一条记录，前端查询最新记录。
-
-    模拟写入：runtime 定期生成模拟识别数据写入此表。
-    """
+    """外部摄像头或视觉服务上报的真实识别记录。"""
     __tablename__ = "camera_detections"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)

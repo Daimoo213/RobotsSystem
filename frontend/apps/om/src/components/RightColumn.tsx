@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Panel, AlertList, ProgressBar } from '@robots/ui';
 import { useOmStore } from '../stores/omStore';
-import { DEVICE_TYPE_LABELS, COLORS } from '@robots/utils';
+import { DEVICE_TYPE_LABELS, COLORS, formatDisplayValue } from '@robots/utils';
 import { acknowledgeAlert, getEnvironment, getHealthScore, getKpi } from '@robots/api-client';
 import type { EnvironmentData, HealthScore, KpiData } from '@robots/api-client';
 
@@ -119,11 +119,11 @@ export function RightColumn() {
             <ProgressBar value={kpi?.overall_progress ?? 0} color={COLORS.cyan} height={4} />
           </div>
           <div className="flex justify-between text-[11px]">
-            <span className="text-[#aecce0]">Open alerts</span>
+            <span className="text-[#aecce0]">未处理告警</span>
             <span className="font-mono" style={{ color: (health?.open_alerts ?? 0) > 0 ? '#FFB33D' : '#34DF9A' }}>{health?.open_alerts ?? '--'}</span>
           </div>
           <div className="flex justify-between text-[11px]">
-            <span className="text-[#aecce0]">Telemetry updated</span>
+            <span className="text-[#aecce0]">遥测更新时间</span>
             <span className="font-mono text-[#aecce0]">
               {env?.updated_at ? new Date(env.updated_at).toLocaleTimeString() : '--'}
             </span>
@@ -131,7 +131,7 @@ export function RightColumn() {
           {env?.has_data && (
             <div className="flex justify-between text-[11px]">
               <span className="text-[#aecce0]">扬尘等级</span>
-              <span style={{ color: env.dust_level === '优' || env.dust_level === '良' ? '#34DF9A' : '#FFB33D' }}>{env.dust_level}</span>
+              <span style={{ color: ['优', '良'].includes(formatDisplayValue(env.dust_level)) ? '#34DF9A' : '#FFB33D' }}>{formatDisplayValue(env.dust_level)}</span>
             </div>
           )}
         </div>

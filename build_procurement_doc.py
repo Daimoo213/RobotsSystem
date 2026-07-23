@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""采购需求文档 v4（硬件参数版）：
+"""采购需求文档 v6（多标的版）：
+- 7 类设备拆分为 7 个独立标的（表格 7 个数据行），每行配正确计量单位
 - 技术参数仅列硬件规格，不含功能描述 / 使用场景 / 录像回放
-- 以基础下限为标准（如 4 核 / 16G / 显存 4GB / 1080p / 802.3af / IP66）
+- 以基础下限为标准（4 核 / 16G / 显存 4GB / 1080p / 802.3af / IP66）
 - 摄像头仅支持实时查看（非 AI、无录像回放）
 - 每条参数独立成行，条目间空行分隔，沿用"编号 + 参数：+ ▲ + 投标备注"行文风格
-- 单一标的、统一编号（1.~7. 设备，1.1~7.x 参数），商务要求独立成表外章节
+- 每个标的参数独立从 1 起编号；▲ 在编号前标记实质性要求
+- 商务要求独立成表外章节
 """
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -57,11 +59,11 @@ def merge_full(row, ncols):
         c = c.merge(row.cells[j])
     return c
 
-# =================== 技术参数（仅技术，无商务条款） ===================
-BID_NAME = "机器人集群智能调度系统运行支撑基础设施（调度一体工作站、双屏显示系统、监控摄像头、网络及布线，不含机器人本体）"
-
+# =================== 各标的（类别）技术参数（仅硬件，无商务条款） ===================
+# 每个元组：(标的名称, 数量, 计量单位, [参数行...])
+# 参数行格式："N. 名称：值" 或 "▲N. 名称：值"（▲ 在编号前，标记实质性要求）
 CATEGORIES = [
-    ("【类别一】调度一体工作站（主机 / 显卡 / 存储）— 1 台", [
+    ("调度一体工作站（主机 / 显卡 / 存储）", 1, "台", [
         "1. CPU：≥ 4 物理核心（x86-64 架构，主频 ≥ 2.0GHz）。",
         "2. 内存：≥ 16GB DDR4。",
         "3. 系统盘：≥ 256GB SSD。",
@@ -71,7 +73,7 @@ CATEGORIES = [
         "▲7. 视频输出：≥ 2× 视频接口（HDMI / DP），支持双屏 1920×1080 输出（投标时提供设备检测报告）。",
         "8. 机箱与电源：塔式或机架式机箱，含电源。",
     ]),
-    ("【类别二】显示系统（双屏）— 1 套", [
+    ("显示系统（双屏）", 1, "套", [
         "1. 显示器数量：≥ 2 台。",
         "▲2. 分辨率：≥ 1920×1080（投标时提供设备检测报告）。",
         "3. 屏幕尺寸：≥ 24 英寸。",
@@ -79,7 +81,7 @@ CATEGORIES = [
         "5. 视频接口：≥ 1× HDMI + ≥ 1× DP。",
         "6. 安装配件：含支架或壁挂件及连接线缆。",
     ]),
-    ("【类别三】监控摄像头系统（实时查看）— 1 套", [
+    ("监控摄像头系统（实时查看）", 1, "套", [
         "1. 摄像机数量：4 台。",
         "▲2. 分辨率：≥ 1920×1080（投标时提供设备检测报告）。",
         "3. 传感器类型：≥ 1/2.8\" CMOS 图像传感器。",
@@ -88,25 +90,25 @@ CATEGORIES = [
         "6. 视频编码：H.264 / H.265（硬件编码）。",
         "▲7. 供电方式：支持 PoE（IEEE 802.3af）或 DC 12V（投标时提供供电规格说明）。",
         "▲8. 防护等级：≥ IP66（投标时提供防护等级检测报告）。",
-        "▲9. 工作温度范围：−10℃ ~ +50℃（投标时提供工作温度检测报告）。",
+        "▲9. 工作温度范围：-10℃ ~ +50℃（投标时提供工作温度检测报告）。",
         "10. 外壳材质：铝合金或工程塑料。",
         "11. 安装接口：吸顶或壁装（含支架接口）。",
         "12. 红外补光：支持夜视（IR），补光距离 ≥ 10m。",
     ]),
-    ("【类别四】核心路由器 — 1 台", [
+    ("核心路由器", 1, "台", [
         "1. WAN 口：≥ 1× 千兆以太网口。",
         "2. LAN 口：≥ 4× 千兆以太网口。",
         "▲3. NAT 吞吐：≥ 1Gbps（投标时提供设备技术规格书）。",
         "4. 电源：外置电源适配器，DC 12V。",
     ]),
-    ("【类别五】PoE 交换机 — 1 台", [
+    ("PoE 交换机", 1, "台", [
         "1. 端口：≥ 8 口千兆以太网（含 PoE 口 ≥ 8）。",
         "▲2. PoE 供电：符合 IEEE 802.3af（单口 ≥ 15.4W），整机 PoE 输出 ≥ 120W（投标时提供 PoE 供电规格说明）。",
         "3. 上联端口：≥ 1× 千兆 SFP / RJ45 上联。",
         "4. 交换容量：≥ 16Gbps。",
         "5. 电源：内置电源，AC 100–240V。",
     ]),
-    ("【类别六】无线接入点 AP — 3 台", [
+    ("无线接入点 AP", 3, "台", [
         "1. 无线标准：IEEE 802.11ax（WiFi 6）。",
         "2. 频段：2.4GHz + 5GHz 双频。",
         "3. 并发终端：≥ 50 台。",
@@ -114,7 +116,7 @@ CATEGORIES = [
         "5. 覆盖半径：≥ 15m（空旷环境）。",
         "6. 安装方式：吸顶式，含安装件。",
     ]),
-    ("【类别七】网络机柜及综合布线 — 1 套", [
+    ("网络机柜及综合布线", 1, "套", [
         "1. 机柜：9–12U 壁挂式网络机柜（≥ 450×400mm 深）。",
         "2. 线缆：六类非屏蔽双绞线（Cat6）及水晶头若干。",
         "3. 电源：机柜 PDU 电源插排 × 1。",
@@ -145,7 +147,7 @@ BIZ_SECTION = [
      "3、采购方式：本项目按政府采购相关规定采用公开招标方式采购（或按采购人批准的采购方式执行）。"
      "4、验收标准：所有设备须符合本需求表及合同要求；采购人有权对不合格部分要求整改，直至验收通过。"),
     ("（四）核心产品",
-     '本标的中的"调度一体工作站"为核心产品。'),
+     '本项目核心产品为“调度一体工作站”（对应标的序号 1）。'),
     ("（五）特殊说明",
      "本项目不接受进口产品竞标，如竞标供应商采用进口产品竞标则作无效响应处理。"),
     ("（六）其他说明",
@@ -162,9 +164,10 @@ sec.page_width = Cm(21.0)
 add_para(doc, "项目采购需求", bold=True, size=16, align=WD_ALIGN_PARAGRAPH.CENTER)
 add_para(doc, "说明：")
 add_para(doc, "1. 本需求表及商务要求中带有“▲”的技术参数或要求为实质性要求，必须满足，响应内容不得低于该技术指标或要求。")
+add_para(doc, "2. 表中各标的参数为基础硬件规格下限，供应商可超配但不得低于上述下限；各设备均须符合相关国家及行业标准。")
 add_para(doc, "采购预算：________元（具体金额以采购公告 / 招标文件为准）")
 
-# ---- 一、技术参数及规格要求（仅技术，单一标的） ----
+# ---- 一、技术参数及规格要求（多标的，每行一标的） ----
 NCOLS = 5
 table = doc.add_table(rows=1, cols=NCOLS)
 table.style = 'Table Grid'
@@ -178,45 +181,21 @@ for i, h in enumerate(["序号", "标的名称", "技术参数及规格要求", 
     add_para(hdr.cells[i], h, bold=True, size=10.5)
     hdr.cells[i].width = Cm([0.9, 3.0, 10.6, 1.2, 1.3][i])
 
-data = table.add_row()
-data.cells[0].width = Cm(0.9)
-data.cells[1].width = Cm(3.0)
-data.cells[2].width = Cm(10.6)
-data.cells[3].width = Cm(1.2)
-data.cells[4].width = Cm(1.3)
-add_para(data.cells[0], "1")
-add_para(data.cells[1], BID_NAME)
-spec_cell = data.cells[2]
-add_para(spec_cell, "（以下按设备构成统一列项，带“▲”为实质性要求，必须满足）", size=9.5)
-
-import re as _re
-def _renumber():
-    out = []
-    for idx, (title, items) in enumerate(CATEGORIES, start=1):
-        new_title = _re.sub(r'^【类别[一二三四五六七八九十]+】\s*', '', title)
-        new_title = f"{idx}. {new_title}"
-        new_items = []
-        for it in items:
-            m = _re.match(r'^(\▲)?(\d+)\.\s+(.*)$', it)
-            if m:
-                ast, num, rest = m.group(1), m.group(2), m.group(3)
-                prefix = f"{idx}.{num} "
-                new_it = ("▲" + prefix + rest) if ast else (prefix + rest)
-            else:
-                new_it = it
-            new_items.append(new_it)
-        out.append((new_title, new_items))
-    return out
-
-for dev_title, dev_items in _renumber():
-    add_para(spec_cell, dev_title, bold=True, size=10.5)
-    add_para(spec_cell, "", size=4)
-    for it in dev_items:
+for idx, (name, count, unit, items) in enumerate(CATEGORIES, start=1):
+    row = table.add_row()
+    row.cells[0].width = Cm(0.9)
+    row.cells[1].width = Cm(3.0)
+    row.cells[2].width = Cm(10.6)
+    row.cells[3].width = Cm(1.2)
+    row.cells[4].width = Cm(1.3)
+    add_para(row.cells[0], str(idx))
+    add_para(row.cells[1], name)
+    spec_cell = row.cells[2]
+    for it in items:
         add_para(spec_cell, it, size=10)
         add_para(spec_cell, "", size=4)
-add_para(spec_cell, NOTE, size=9.5)
-add_para(data.cells[3], "1")
-add_para(data.cells[4], "项")
+    add_para(row.cells[3], str(count))
+    add_para(row.cells[4], unit)
 
 # ---- 二、商务要求（独立于技术参数表格之外） ----
 add_para(doc, "", size=4)
@@ -245,4 +224,4 @@ run3 = p3.add_run("竞标供应商须结合现场实际情况，提供完整的�
 set_run_font(run3, size=10)
 
 doc.save(OUT)
-print("SAVED:", OUT, "| categories:", len(CATEGORIES))
+print("SAVED:", OUT, "| 标的数:", len(CATEGORIES))

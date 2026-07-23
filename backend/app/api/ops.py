@@ -22,7 +22,12 @@ def _not_configured(operation: str) -> None:
     )
 
 
-@router.post("/backup")
+@router.post(
+    "/backup",
+    summary="创建数据库备份",
+    description="使用部署时显式配置的 pg_dump 生成 PostgreSQL custom-format 备份；未配置时返回 501。",
+    response_description="备份文件名、字节大小和创建时间。",
+)
 async def backup(_role=Depends(require("ops.backup"))) -> dict:
     """Create a PostgreSQL custom-format backup only when configured explicitly."""
 
@@ -58,4 +63,3 @@ async def backup(_role=Depends(require("ops.backup"))) -> dict:
         "size_bytes": output_path.stat().st_size,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-

@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,10 +27,15 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 log = get_logger("api.tasks")
 
 
-@router.get("")
+@router.get(
+    "",
+    summary="查询施工任务列表",
+    description="查询真实施工任务，可按任务状态和施工阶段同时筛选，结果按优先级及计划时间排序。",
+    response_description="返回符合筛选条件的施工任务列表。",
+)
 async def list_tasks(
-    status_filter: str | None = Query(None, alias="status"),
-    stage: str | None = None,
+    status_filter: str | None = Query(None, alias="status", description="任务状态编码；省略时不按状态筛选。"),
+    stage: str | None = Query(None, description="施工阶段编码；省略时不按施工阶段筛选。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("read")),
 ) -> list[dict]:
@@ -42,8 +48,13 @@ async def list_tasks(
     return [_task_dict(t) for t in result.scalars().all()]
 
 
-@router.get("/{task_id:uuid}")
-async def get_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+@router.get(
+    "/{task_id:uuid}",
+    summary="查询施工任务详情",
+    description="按任务 UUID 查询任务基本信息、计划、目标点位、分配设备、进度及交付量。",
+    response_description="返回指定施工任务的当前完整信息。",
+)
+async def get_task(task_id: Annotated[uuid.UUID, Path(description="目标任务的 UUID。")], db: AsyncSession = Depends(get_db),
                    _role=Depends(require("read"))) -> dict:
     result = await db.execute(select(Task).where(Task.id == task_id))
     t = result.scalar_one_or_none()
@@ -86,7 +97,12 @@ PROCESS_OPTIONS = [
 ]
 
 
-@router.get("/meta/processes")
+@router.get(
+    "/meta/processes",
+    summary="查询支持的施工工序",
+    description="返回系统支持的 29 项施工工序及其阶段、默认交付单位和默认预估时长。",
+    response_description="返回可用于创建任务的工序选项列表。",
+)
 async def list_processes(_role=Depends(require("read"))) -> list[dict]:
     """返回29项工序选项，供前端任务发布表单下拉使用。"""
     return PROCESS_OPTIONS
@@ -94,25 +110,33 @@ async def list_processes(_role=Depends(require("read"))) -> list[dict]:
 
 class TaskCreate(BaseModel):
     """任务发布请求——完整业务字段。"""
-    name: str = Field(..., description="任务名称")
-    process_id: str = Field(..., description="工序ID（29项之一）")
-    map_point_id: str | None = Field(None, description="目标施工点位ID（外键关联map_points）")
-    priority: int = Field(50, description="优先级 0-100")
-    estimated_duration: int = Field(60, description="预估工期（分钟）")
-    planned_start: datetime | None = Field(None, description="计划开始时间")
-    planned_end: datetime | None = Field(None, description="计划结束时间")
-    deliverable_qty: float | None = Field(None, description="交付结果量化数值")
-    deliverable_unit: str | None = Field(None, description="交付单位（m³/车次/㎡/吨...）")
-    dependencies: list[str] = Field(default_factory=list, description="前置依赖任务ID列表")
-    stage: str = Field("earthwork", description="施工阶段")
-    required_device_type: str | None = Field(None, description="要求设备类型")
-    params: dict = Field(default_factory=dict, description="附加参数")
-    description: str | None = Field(None, description="任务描述/备注")
+    name: str = Field(..., description="任务名称，用于调度台和设备任务记录展示。")
+    process_id: str = Field(..., description="工序编码，必须取自工序选项接口返回的 29 项工序之一。")
+    map_point_id: str | None = Field(None, description="目标施工点位 UUID；当前可调度任务必须提供且点位必须已存在。")
+    priority: int = Field(50, description="任务优先级，约定范围 0 至 100；数值越大越优先。")
+    estimated_duration: int = Field(60, description="预计执行时长，单位为分钟。")
+    planned_start: datetime | None = Field(None, description="计划开始时间，使用带时区的 ISO 8601 时间。")
+    planned_end: datetime | None = Field(None, description="计划结束时间；省略时可由计划开始时间和预计时长推导。")
+    deliverable_qty: float | None = Field(None, description="计划交付工作量。")
+    deliverable_unit: str | None = Field(None, description="交付工作量单位；省略时使用工序默认单位，例如 m³、车次、㎡或吨。")
+    dependencies: list[str] = Field(default_factory=list, description="必须先完成的前置任务 UUID 字符串列表。")
+    stage: str = Field("earthwork", description="施工阶段编码；默认 earthwork。")
+    required_device_type: str | None = Field(None, description="执行任务所需的设备类型编码，用于点位兼容性和调度匹配。")
+    params: dict = Field(default_factory=dict, description="传递给调度器和设备任务命令的业务扩展参数。")
+    description: str | None = Field(None, description="任务业务说明或现场备注。")
 
 
-@router.post("")
+@router.post(
+    "",
+    summary="创建施工任务",
+    description=(
+        "创建真实施工任务并写入数据库，校验目标点位和设备类型兼容性。"
+        "创建成功后任务进入调度 DAG，并通过 WebSocket 通知前端；设备分配由后续调度周期完成。"
+    ),
+    response_description="返回已创建任务的完整信息和服务端生成的任务编码。",
+)
 async def create_task(
-    req: TaskCreate,
+    req: Annotated[TaskCreate, Body(description="待创建施工任务的计划、点位、工序和调度要求。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("task.create")),
 ) -> dict:
@@ -220,17 +244,22 @@ async def create_task(
 class TaskUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = None
-    priority: int | None = None
-    planned_start: datetime | None = None
-    planned_end: datetime | None = None
-    deliverable_qty: float | None = None
+    name: str | None = Field(default=None, description="新的任务名称；省略或传 null 时保持原值。")
+    priority: int | None = Field(default=None, description="新的任务优先级；省略或传 null 时保持原值。")
+    planned_start: datetime | None = Field(default=None, description="新的计划开始时间；省略或传 null 时保持原值。")
+    planned_end: datetime | None = Field(default=None, description="新的计划结束时间；省略或传 null 时保持原值。")
+    deliverable_qty: float | None = Field(default=None, description="新的计划交付工作量；省略或传 null 时保持原值。")
 
 
-@router.patch("/{task_id}")
+@router.patch(
+    "/{task_id}",
+    summary="更新施工任务",
+    description="更新任务名称、优先级、计划时间或计划交付量；未提供的字段保持不变。",
+    response_description="返回更新后的施工任务完整信息。",
+)
 async def update_task(
-    task_id: uuid.UUID,
-    req: TaskUpdate,
+    task_id: Annotated[uuid.UUID, Path(description="目标任务的 UUID。")],
+    req: Annotated[TaskUpdate, Body(description="需要更新的任务字段；未提供的字段保持不变。")],
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("task.update")),
 ) -> dict:
@@ -261,10 +290,18 @@ async def update_task(
     return task_dict
 
 
-@router.post("/{task_id}/reassign")
+@router.post(
+    "/{task_id}/reassign",
+    summary="改派施工任务设备",
+    description=(
+        "将任务改派给另一台已启用且空闲的兼容设备。若原任务正在执行，先向原设备下发取消命令，"
+        "待设备遥测确认后再完成改派；无活动执行实例时直接创建新的任务执行。"
+    ),
+    response_description="返回进入改派流程后的任务当前信息。",
+)
 async def reassign_task(
-    task_id: uuid.UUID,
-    device_id: uuid.UUID = Query(..., description="目标设备ID"),
+    task_id: Annotated[uuid.UUID, Path(description="待改派任务的 UUID。")],
+    device_id: uuid.UUID = Query(..., description="接收任务的目标设备 UUID。"),
     db: AsyncSession = Depends(get_db),
     _role=Depends(require("task.reassign")),
 ) -> dict:
@@ -337,8 +374,13 @@ async def reassign_task(
     return task_dict
 
 
-@router.post("/{task_id}/pause")
-async def pause_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+@router.post(
+    "/{task_id}/pause",
+    summary="请求暂停施工任务",
+    description="为任务当前执行设备写入暂停命令，并将执行实例标记为等待设备确认；响应不表示设备已暂停。",
+    response_description="返回命令入队状态和任务当前信息。",
+)
+async def pause_task(task_id: Annotated[uuid.UUID, Path(description="待暂停任务的 UUID。")], db: AsyncSession = Depends(get_db),
                      _role=Depends(require("task.pause"))) -> dict:
     result = await db.execute(select(Task).where(Task.id == task_id))
     t = result.scalar_one_or_none()
@@ -372,8 +414,13 @@ async def pause_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     raise HTTPException(status_code=404, detail="task not found")
 
 
-@router.post("/{task_id}/resume")
-async def resume_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+@router.post(
+    "/{task_id}/resume",
+    summary="请求恢复施工任务",
+    description="为已暂停任务的执行设备写入恢复命令，并等待设备遥测确认；响应不表示设备已恢复执行。",
+    response_description="返回命令入队状态和任务当前信息。",
+)
+async def resume_task(task_id: Annotated[uuid.UUID, Path(description="待恢复任务的 UUID。")], db: AsyncSession = Depends(get_db),
                       _role=Depends(require("task.resume"))) -> dict:
     result = await db.execute(select(Task).where(Task.id == task_id))
     t = result.scalar_one_or_none()
@@ -407,8 +454,13 @@ async def resume_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
     raise HTTPException(status_code=404, detail="task not found")
 
 
-@router.delete("/{task_id}")
-async def delete_task(task_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+@router.delete(
+    "/{task_id}",
+    summary="删除施工任务",
+    description="删除指定任务记录，并通过 WebSocket 广播任务删除事件。重复删除不存在的任务仍返回成功。",
+    response_description="返回任务删除操作结果。",
+)
+async def delete_task(task_id: Annotated[uuid.UUID, Path(description="待删除任务的 UUID。")], db: AsyncSession = Depends(get_db),
                       _role=Depends(require("task.update"))) -> dict:
     """删除任务（PM权限）。"""
     result = await db.execute(select(Task).where(Task.id == task_id))

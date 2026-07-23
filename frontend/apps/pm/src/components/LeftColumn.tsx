@@ -5,7 +5,7 @@
 import { useEffect } from 'react';
 import { Panel, DonutChart, ProgressBar } from '@robots/ui';
 import { usePmStore } from '../stores/pmStore';
-import { DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, STAGES, COLORS, STATUS_COLORS } from '@robots/utils';
+import { DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, STAGES, COLORS, STATUS_COLORS, formatDisplayValue } from '@robots/utils';
 import { getResourceLoad, getTrend, getCameras } from '@robots/api-client';
 
 export function LeftColumn() {
@@ -76,7 +76,7 @@ export function LeftColumn() {
           {resourceLoad.length > 0 ? (
             resourceLoad.map((item) => (
               <div key={item.type} className="flex items-center gap-2">
-                <span className="w-16 text-[11px] text-[#aecce0]">{item.label}</span>
+                <span className="w-16 text-[11px] text-[#aecce0]">{formatDisplayValue(item.label, '未知设备类型')}</span>
                 <div className="flex-1">
                   <ProgressBar
                     value={item.load_rate}

@@ -12,8 +12,8 @@ const KPIS = [
   { key: 'pending_tasks', label: '待闭环事项', icon: ClipboardList, color: '#FFB33D', unit: '' },
   { key: 'delay_risk', label: '延期风险', icon: AlertTriangle, color: '#FF5C6D', unit: '' },
   { key: 'resource_load', label: '资源负载率', icon: Gauge, color: '#3D8CFF', unit: '%' },
-  { key: 'spoil_trips', label: '渣土外运量', icon: Package, color: '#B56CFF', unit: 'm³' },
-  { key: 'ai_compliance', label: 'AI识别合规率', icon: ScanEye, color: '#34DF9A', unit: '%' },
+  { key: 'spoil_trips', label: '渣土外运量', icon: Package, color: '#B56CFF', unit: '立方米' },
+  { key: 'ai_compliance', label: '人工智能识别合规率', icon: ScanEye, color: '#34DF9A', unit: '%' },
 ] as const;
 
 export function KpiStrip() {
