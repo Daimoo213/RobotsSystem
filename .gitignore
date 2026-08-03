@@ -1,6 +1,13 @@
 # Local Python caches
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
 
 # Dependency installations
 node_modules/
@@ -31,4 +38,14 @@ frontend/apps/*/.env
 frontend/apps/*/dist/
 
 # Legacy and manually captured local server logs
-backend/*.log
+*.log
+
+# One-off root-level document inspection scripts
+/_dump_check.py
+/_read_doc.py
+/_tmp_read*.py
+/_verify_*.py
+
+# Operating system file metadata
+.DS_Store
+Thumbs.db
