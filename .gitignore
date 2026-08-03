@@ -46,6 +46,11 @@ frontend/apps/*/dist/
 /_tmp_read*.py
 /_verify_*.py
 
+# Early project research and generated office documents stay local only.
+# This rule applies only to the repository root; implementation manuals in docs/ remain tracked.
+/*.docx
+/*.xlsx
+
 # Operating system file metadata
 .DS_Store
 Thumbs.db
