@@ -25,8 +25,8 @@ OPENAPI_TAGS = [
     {"name": "map", "description": "项目区域、施工点位和外部地图资产的持久化管理。"},
     {"name": "alerts", "description": "真实设备和业务规则产生的告警查询与确认。"},
     {"name": "reports", "description": "基于数据库记录生成 Excel 或 PDF 报表。"},
-    {"name": "pointcloud", "description": "接收外部 SLAM、传感器或 Gazebo 桥接程序提供的点云快照。"},
-    {"name": "ops", "description": "需要显式部署配置和 O&M 权限的运维操作。"},
+    {"name": "pointcloud", "description": "接收外部 SLAM、传感器或 Gazebo 桥接程序提供的完整点云地图。"},
+    {"name": "ops", "description": "需要显式部署配置和 O&M 权限的运维操作，包括建图模式开关。"},
     {"name": "estop", "description": "全局急停触发与安全恢复。设备本体安全回路始终具有更高优先级。"},
     {"name": "系统状态", "description": "供进程管理器和部署健康检查使用的存活与就绪接口。"},
 ]
@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers ──────────────────────────────────────────
-    from app.api import alerts, auth, cameras, dashboard, devices, map as map_api, pointcloud, reports, scripts, tasks
+    from app.api import alerts, auth, cameras, dashboard, device_map, devices, map as map_api, pointcloud, reports, scripts, tasks
     from app.api import ops as ops_api
     from app.api import estop as estop_api
     from app.ws import ws_router
@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=api_prefix)
     app.include_router(dashboard.router, prefix=api_prefix)
     app.include_router(devices.router, prefix=api_prefix)
+    app.include_router(device_map.router, prefix=api_prefix)
     app.include_router(cameras.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
     app.include_router(scripts.router, prefix=api_prefix)

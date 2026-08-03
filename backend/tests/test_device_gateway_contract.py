@@ -5,14 +5,17 @@ from fastapi import HTTPException
 
 from app.api.devices import (
     GatewayCommandAck,
+    GatewayCameraTelemetry,
     GatewayRegistration,
     GatewayTelemetry,
+    _camera_state,
     require_gateway_api_key,
     router,
 )
 from app.api.map import MapAssetIn
 from app.core.config import Settings, settings
 from app.models.models import DeviceCommand
+from app.services.device_connectivity import connection_health, connection_status
 
 
 def test_gateway_routes_are_exposed() -> None:
@@ -22,6 +25,8 @@ def test_gateway_routes_are_exposed() -> None:
     assert ("/devices/gateway/{device_code}/telemetry", "POST") in routes
     assert ("/devices/gateway/{device_code}/commands", "GET") in routes
     assert ("/devices/gateway/{device_code}/commands/{command_id}/ack", "POST") in routes
+    assert ("/devices/{device_id}/camera", "GET") in routes
+    assert ("/devices/{device_id}/camera/control", "POST") in routes
 
 
 def test_gateway_payloads_preserve_operational_data() -> None:
@@ -52,6 +57,36 @@ def test_gateway_payloads_preserve_operational_data() -> None:
         "acknowledgement",
         "idempotency_key",
         "mission_execution_id",
+    }
+
+
+def test_camera_state_requires_sensor_enablement_before_exposing_stream() -> None:
+    camera = GatewayCameraTelemetry.model_validate(
+        {
+            "enabled": True,
+            "is_online": True,
+            "stream_url": "https://media.example.test/robot-101/index.m3u8",
+            "stream_protocol": "hls",
+        }
+    )
+    device = type("DeviceStub", (), {
+        "capabilities": {"camera": {"stream_url": camera.stream_url, "stream_protocol": "hls"}},
+        "operational_metrics": {"camera": {"enabled": False, "is_online": True}},
+    })()
+
+    disabled_state = _camera_state(device)
+    assert disabled_state["available"] is True
+    assert disabled_state["enabled"] is False
+    assert disabled_state["stream_url"] is None
+
+    device.operational_metrics = {"camera": camera.model_dump(exclude_none=True)}
+    enabled_state = _camera_state(device)
+    assert enabled_state == {
+        "available": True,
+        "enabled": True,
+        "is_online": True,
+        "stream_url": "https://media.example.test/robot-101/index.m3u8",
+        "stream_protocol": "hls",
     }
 
 
@@ -128,3 +163,13 @@ def test_map_asset_requires_external_absolute_uri() -> None:
                 "asset_uri": "/static/mesh.glb", "observed_at": "2026-07-20T12:00:00Z",
             }
         )
+
+
+def test_connection_status_expires_after_the_heartbeat_window() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    assert connection_status(now - timedelta(seconds=15), now) == "online"
+    assert connection_status(now - timedelta(seconds=16), now) == "offline"
+    assert connection_status(None, now) == "offline"
+    assert connection_health(now - timedelta(seconds=16), now) == "fail"

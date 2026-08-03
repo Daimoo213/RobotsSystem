@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -20,6 +21,7 @@ class DAGNode:
     estimated_duration: int = 60
     progress: float = 0.0
     stage: str = "earthwork"
+    planned_start: datetime | None = None
 
 
 class TaskDAG:
@@ -70,11 +72,30 @@ class TaskDAG:
             if device_id is not None:
                 node.device_id = device_id
 
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        name: str | None = None,
+        priority: int | None = None,
+        planned_start: datetime | None = None,
+    ) -> None:
+        """Keep mutable scheduling fields aligned with the database record."""
+
+        node = self._nodes.get(task_id)
+        if node is None:
+            return
+        if name is not None:
+            node.name = name
+        if priority is not None:
+            node.priority = priority
+        node.planned_start = planned_start
+
     def get_ready_tasks(self) -> list[DAGNode]:
         """Return all pending tasks whose dependencies are all completed, sorted by priority."""
         ready = [
             n for n in self._nodes.values()
-            if n.status == "pending" and self._all_deps_completed(n.task_id)
+            if n.status in {"pending", "assigned", "running"} and self._all_deps_completed(n.task_id)
         ]
         ready.sort(key=lambda n: n.priority, reverse=True)
         return ready

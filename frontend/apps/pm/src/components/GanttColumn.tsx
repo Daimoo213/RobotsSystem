@@ -14,17 +14,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Layers, Filter, AlertTriangle, Milestone } from 'lucide-react';
 import { Panel, ProgressBar } from '@robots/ui';
 import { usePmStore } from '../stores/pmStore';
-import { COLORS, formatDateTime, formatUnit, PROCESSES, STAGE_LABELS, TASK_STATUS_LABELS } from '@robots/utils';
+import { COLORS, DEVICE_TYPE_LABELS, DISPATCH_REASON_LABELS, DISPATCH_STATE_LABELS, formatDateTime, formatUnit, MISSION_PHASE_LABELS, PROCESSES, STAGE_LABELS, TASK_STATUS_LABELS } from '@robots/utils';
 import type { Task } from '@robots/shared-types';
 import { exportReport } from '@robots/api-client';
-import { listDevices, pauseTask, reassignTask, resumeTask } from '@robots/api-client';
-import type { Device } from '@robots/shared-types';
+import { cancelTask, deleteTask, pauseTask, recalculateTaskResourcePlan, resumeTask } from '@robots/api-client';
 
 type Granularity = 'day' | 'week' | 'month' | 'quarter';
 
 const STATUS_FILL: Record<string, string> = {
   completed: COLORS.green, running: COLORS.cyan, pending: COLORS.blue,
-  paused: COLORS.amber, failed: COLORS.red, assigned: COLORS.cyan,
+  paused: COLORS.amber, failed: COLORS.red, assigned: COLORS.cyan, reassign_pending: COLORS.amber,
+  cancel_requested: COLORS.amber, cancelled: COLORS.gray,
 };
 
 const STATUS_LABELS = TASK_STATUS_LABELS;
@@ -42,7 +42,8 @@ export function GanttColumn() {
   const { tasks, activeStage } = usePmStore();
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [filter, setFilter] = useState<'all' | 'risk' | 'running'>('all');
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) || null;
   const [exporting, setExporting] = useState(false);
 
   // 横向滚动同步：右列内部横向滚动 ↔ 底部常驻滚动条
@@ -244,7 +245,7 @@ export function GanttColumn() {
               {filtered.filter((t) => effStage(t) === stage).map((t) => (
                 <div
                   key={t.id}
-                  onClick={() => setSelectedTask(t)}
+                  onClick={() => setSelectedTaskId(t.id)}
                   className="flex cursor-pointer items-center justify-between border-l-2 py-1 pl-2 pr-1 text-[11px] hover:bg-[rgba(47,215,255,0.08)]"
                   style={{ height: ROW_H, borderColor: STATUS_FILL[t.status] || COLORS.gray }}
                 >
@@ -345,7 +346,7 @@ export function GanttColumn() {
                     key={t.id}
                     className="absolute flex items-center"
                     style={{ top: topPos, left: g.left, width: g.width, height: ROW_H }}
-                    onClick={() => setSelectedTask(t)}
+                    onClick={() => setSelectedTaskId(t.id)}
                   >
                     <div
                       className="relative flex h-4 w-full items-center rounded"
@@ -409,7 +410,7 @@ export function GanttColumn() {
       </div>
 
       {selectedTask && (
-        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTaskId(null)} />
       )}
     </Panel>
   );
@@ -453,25 +454,64 @@ function buildTicks(minTime: number, maxTime: number, g: Granularity): { x: numb
 
 // ── 任务详情弹窗 ──────────────────────────────────────────
 function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
+  const removeTask = usePmStore((state) => state.removeTask);
+  const updateTask = usePmStore((state) => state.updateTask);
   const color = STATUS_FILL[task.status] || COLORS.gray;
   const procName = PROCESSES[task.process_id]?.name || '未知工序';
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    listDevices().then(setDevices).catch((reason) => setError(reason instanceof Error ? reason.message : '读取设备失败'));
-  }, []);
-
   const execute = async (action: () => Promise<unknown>) => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setNotice('');
     try { await action(); onClose(); } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); } finally { setBusy(false); }
+  };
+
+  const handleCancel = async () => {
+    if (!window.confirm(`确认取消任务“${task.name}”吗？平台会向已分配设备下发取消命令，并等待设备遥测确认。`)) return;
+
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await cancelTask(task.id);
+      if (!result.ok) {
+        setError('任务取消请求未完成，请刷新后确认任务状态');
+        return;
+      }
+      if (result.task) updateTask(result.task);
+      setNotice('取消命令已下发，正在等待设备遥测确认。');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '提交任务取消请求失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`确认删除尚未派发的任务“${task.name}”吗？此操作不可恢复。`)) return;
+
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await deleteTask(task.id);
+      if (!result.ok) {
+        setError('任务删除未完成，请刷新后确认任务状态');
+        return;
+      }
+      removeTask(task.id);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '取消或删除任务失败');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-96 rounded-xl border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.95)] p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-[440px] overflow-y-auto rounded-xl border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.95)] p-5" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-[16px] font-bold text-[#E6F6FF]">任务详情</h3>
           <button onClick={onClose} className="text-[#79A3BF] hover:text-[#FF5C6D]">✕</button>
@@ -481,6 +521,9 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
           <Row label="任务名称" value={task.name} />
           <Row label="工序" value={procName} />
            <Row label="状态" value={STATUS_LABELS[task.status] || '未知状态'} color={color} />
+          <Row label="调度状态" value={DISPATCH_STATE_LABELS[task.dispatch_state] || '未知调度状态'} />
+          {task.dispatch_reason && <Row label="等待原因" value={DISPATCH_REASON_LABELS[task.dispatch_reason] || task.dispatch_reason} color={COLORS.amber} />}
+          {task.current_phase && <Row label="执行阶段" value={MISSION_PHASE_LABELS[task.current_phase] || '未知执行阶段'} color={COLORS.cyan} />}
           <Row label="优先级" value={String(task.priority)} />
           <Row label="阶段" value={STAGE_LABELS[task.stage] || '未知阶段'} />
           {task.planned_start && <Row label="计划开始" value={formatDateTime(task.planned_start)} />}
@@ -491,8 +534,12 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
            {task.deliverable_qty ? <Row label="交付总量" value={`${task.deliverable_qty} ${formatUnit(task.deliverable_unit)}`} color={COLORS.cyan} /> : null}
            {task.completed_qty > 0 ? <Row label="已完成量" value={`${task.completed_qty} ${formatUnit(task.deliverable_unit)}`} color={COLORS.green} /> : null}
           {task.map_point_name ? <Row label="目标点位" value={`${task.map_point_code} ${task.map_point_name}`} /> : null}
+          <Row label="作业后处置" value={task.return_policy === 'return_to_point' ? '返回指定点位' : '原地结束'} />
+          {task.return_point_name ? <Row label="返回点位" value={`${task.return_point_code} ${task.return_point_name}`} /> : null}
+          {Object.keys(task.work_parameters || {}).length > 0 ? <Row label="结构化作业参数" value={`${Object.keys(task.work_parameters).length} 项`} /> : null}
           {task.dependencies?.length ? <Row label="前置依赖" value={task.dependencies.length + ' 项'} /> : null}
         </div>
+        <ResourcePlanSection task={task} />
         <div className="mt-3 mb-2">
           <div className="mb-1 flex justify-between text-[11px]">
             <span className="text-[#aecce0]">执行进度</span>
@@ -501,21 +548,67 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
           <ProgressBar value={task.progress} color={color} />
         </div>
         <div className="mt-4 flex gap-2">
-          <select value={selectedDeviceId} onChange={(event) => setSelectedDeviceId(event.target.value)} className="min-w-0 flex-1 border border-[rgba(91,183,255,0.3)] bg-[#0A1521] px-1 text-[11px] text-[#E6F6FF]">
-            <option value="">选择设备改派</option>
-            {devices.filter((device) => device.status === 'idle').map((device) => <option key={device.id} value={device.id}>{device.code}</option>)}
-          </select>
-          <button disabled={!selectedDeviceId || busy} onClick={() => execute(() => reassignTask(task.id, selectedDeviceId))} className="rounded border border-[rgba(91,183,255,0.3)] px-2 text-[12px] text-[#aecce0] hover:border-[#2FD7FF] disabled:opacity-40">改派</button>
+          <button disabled={busy || ['completed', 'cancel_requested', 'cancelled'].includes(task.status)} onClick={() => execute(() => recalculateTaskResourcePlan(task.id))} className="flex-1 rounded border border-[rgba(47,215,255,0.42)] py-1.5 text-[12px] text-[#2FD7FF] hover:bg-[rgba(47,215,255,0.1)] disabled:opacity-40">重新规划资源</button>
           {task.status === 'running' ? (
             <button disabled={busy} onClick={() => execute(() => pauseTask(task.id))} className="flex-1 rounded border border-[rgba(255,179,61,0.4)] py-1.5 text-[12px] text-[#FFB33D] hover:bg-[rgba(255,179,61,0.1)] disabled:opacity-40">暂停</button>
           ) : task.status === 'paused' ? (
             <button disabled={busy} onClick={() => execute(() => resumeTask(task.id))} className="flex-1 rounded border border-[rgba(52,223,154,0.4)] py-1.5 text-[12px] text-[#34DF9A] hover:bg-[rgba(52,223,154,0.1)] disabled:opacity-40">恢复</button>
           ) : null}
+          {['assigned', 'running', 'paused', 'reassign_pending'].includes(task.status) && <button disabled={busy} onClick={handleCancel} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">取消任务</button>}
+          {task.status === 'pending' && <button disabled={busy} onClick={handleDelete} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">删除任务</button>}
           <button onClick={onClose} className="flex-1 rounded bg-[rgba(91,183,255,0.15)] py-1.5 text-[12px] text-[#2FD7FF]">关闭</button>
         </div>
         {error && <div className="mt-2 text-[11px] text-[#FF5C6D]">{error}</div>}
+        {notice && <div className="mt-2 text-[11px] text-[#FFB33D]">{notice}</div>}
       </div>
     </div>
+  );
+}
+
+function ResourcePlanSection({ task }: { task: Task }) {
+  const plan = task.resource_plan;
+  const summaries = plan?.summary.requirements || [];
+  const allocations = task.resource_allocations || [];
+
+  return (
+    <section className="mt-4 border-t border-[rgba(91,183,255,0.18)] pt-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h4 className="text-[13px] font-medium text-[#E6F6FF]">集群资源计划</h4>
+        <span className={`text-[11px] ${plan?.coverage_ratio === 1 ? 'text-[#34DF9A]' : 'text-[#FFB33D]'}`}>
+          {plan ? `产能覆盖 ${Math.round(plan.coverage_ratio * 100)}%` : '待计算'}
+        </span>
+      </div>
+      {!plan ? <div className="text-[11px] text-[#5A7A92]">任务尚未具备资源规划结果。</div> : (
+        <>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+            <span className="text-[#79A3BF]">计划状态</span><span className="text-right text-[#aecce0]">{DISPATCH_STATE_LABELS[plan.state] || '未知状态'}</span>
+            <span className="text-[#79A3BF]">需求产能</span><span className="text-right font-mono text-[#aecce0]">{plan.required_rate_per_hour?.toFixed(2) || '-'} /小时</span>
+            <span className="text-[#79A3BF]">计划产能</span><span className="text-right font-mono text-[#2FD7FF]">{plan.planned_rate_per_hour.toFixed(2)} /小时</span>
+            {plan.predicted_completion_at && <><span className="text-[#79A3BF]">预计完成</span><span className="text-right text-[#aecce0]">{formatDateTime(plan.predicted_completion_at)}</span></>}
+          </div>
+          {plan.reason && <div className="mt-1 text-[11px] text-[#FFB33D]">{DISPATCH_REASON_LABELS[plan.reason] || '计划条件待补充'}</div>}
+          {plan.summary.message && <div className="mt-1 text-[11px] text-[#FFB33D]">{plan.summary.message}</div>}
+          {summaries.map((summary) => (
+            <div key={summary.requirement_id} className="mt-2 border border-[rgba(91,183,255,0.15)] bg-[#0A1521] px-2 py-1.5 text-[11px]">
+              <div className="flex justify-between text-[#aecce0]"><span>{summary.role_code === 'primary' ? '主作业' : '协同作业'}：{PROCESSES[summary.capability_code]?.name || '未登记工序'}</span><span>{summary.completed_qty}/{summary.required_qty}{formatUnit(summary.output_unit)}</span></div>
+              {summary.device_types.map((type) => (
+                <div key={type.device_type} className="mt-1 flex justify-between text-[#79A3BF]">
+                  <span>{DEVICE_TYPE_LABELS[type.device_type] || '未登记设备类型'}</span>
+                  <span>计划 {type.planned_count} 台，可用 {type.available_count} 台，{type.planned_rate_per_hour.toFixed(2)}/小时</span>
+                </div>
+              ))}
+            </div>
+          ))}
+          {allocations.length > 0 && <div className="mt-2 space-y-1">
+            <div className="text-[11px] text-[#79A3BF]">执行单元</div>
+            {allocations.map((allocation) => <div key={allocation.id} className="flex justify-between text-[11px] text-[#aecce0]">
+              <span>{allocation.device_code || '设备待确认'} {allocation.device_type ? `(${DEVICE_TYPE_LABELS[allocation.device_type] || '未登记设备类型'})` : ''}</span>
+              <span>{allocation.completed_qty}/{allocation.planned_qty}{formatUnit(allocation.output_unit)} {MISSION_PHASE_LABELS[allocation.execution_phase || ''] || '等待设备确认'}</span>
+            </div>)}
+          </div>}
+        </>
+      )}
+    </section>
   );
 }
 

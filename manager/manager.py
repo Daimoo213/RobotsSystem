@@ -56,7 +56,7 @@ ACCENT = '#38bdf8'
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    'schema_version': 2,
+    'schema_version': 3,
     'python': sys.executable,
     'pnpm': 'pnpm',
     'runtime': {
@@ -84,7 +84,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             'prepare_cmd': ['{python}', '-m', 'alembic', 'upgrade', 'head'],
             'cmd': [
                 '{python}', '-m', 'uvicorn', 'app.main:app', '--host',
-                '0.0.0.0', '--port', '8000',
+                '0.0.0.0', '--port', '8000', '--reload', '--reload-dir', 'app',
             ],
             'cwd': '{root}/backend',
             'port': 8000,
@@ -94,7 +94,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 'http://127.0.0.1:8000/api/auth/setup-status',
             ],
             'color': '#38bdf8',
-            'hint': '启动前自动执行数据库迁移；监听局域网，默认不启用 reload。',
+            'hint': '启动前自动执行数据库迁移；监听局域网，并默认监控 app 目录热重载。',
         },
         'frontend_pm': {
             'name': '前端 PM 端 (施工进度指挥)',
@@ -242,7 +242,7 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    """Load configuration and migrate the original manager configuration once."""
+    """Load configuration and migrate known legacy defaults without overriding custom commands."""
     config_path = path or CONFIG_FILE
     if not config_path.exists():
         write_json(config_path, DEFAULT_CONFIG)
@@ -250,14 +250,27 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
     raw = json.loads(config_path.read_text(encoding='utf-8'))
     if raw.get('schema_version', 1) < 2:
-        # The old tool used --reload and unpinned Vite ports.  Preserve only
-        # executable overrides while replacing unsafe service definitions.
+        # Preserve only executable overrides while replacing unsafe original
+        # service definitions that used unpinned Vite ports.
         migrated = deep_merge({}, DEFAULT_CONFIG)
         for key in ('python', 'pnpm'):
             if raw.get(key):
                 migrated[key] = raw[key]
         write_json(config_path, migrated)
         return migrated
+    if raw.get('schema_version', 2) < 3:
+        migrated = deep_merge({}, raw)
+        backend = migrated.get('services', {}).get('backend', {})
+        legacy_command = [
+            '{python}', '-m', 'uvicorn', 'app.main:app', '--host',
+            '0.0.0.0', '--port', '8000',
+        ]
+        if backend.get('cmd') == legacy_command:
+            backend['cmd'] = list(DEFAULT_CONFIG['services']['backend']['cmd'])
+            backend['hint'] = DEFAULT_CONFIG['services']['backend']['hint']
+        migrated['schema_version'] = 3
+        write_json(config_path, migrated)
+        return deep_merge(DEFAULT_CONFIG, migrated)
     return deep_merge(DEFAULT_CONFIG, raw)
 
 

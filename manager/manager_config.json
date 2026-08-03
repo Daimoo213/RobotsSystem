@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "pnpm": "pnpm",
   "runtime": {
     "log_max_bytes": 5242880,
@@ -24,13 +24,13 @@
       "name": "后端 API (FastAPI)",
       "mode": "process",
       "prepare_cmd": ["{python}", "-m", "alembic", "upgrade", "head"],
-      "cmd": ["{python}", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"],
+      "cmd": ["{python}", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"],
       "cwd": "{root}/backend",
       "port": 8000,
       "url": "http://127.0.0.1:8000/docs",
       "health_urls": ["http://127.0.0.1:8000/ready", "http://127.0.0.1:8000/api/auth/setup-status"],
       "color": "#38bdf8",
-      "hint": "启动前自动执行数据库迁移；监听局域网，默认不启用 reload。"
+      "hint": "启动前自动执行数据库迁移；监听局域网，并默认监控 app 目录热重载。"
     },
     "frontend_pm": {
       "name": "前端 PM 端 (施工进度指挥)",

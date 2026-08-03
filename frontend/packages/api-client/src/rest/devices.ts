@@ -1,6 +1,6 @@
 /** REST API: Devices */
 
-import type { Device } from '@robots/shared-types';
+import type { Device, MissionPhase } from '@robots/shared-types';
 import { apiGet, apiPost } from './client';
 
 export function listDevices(params?: { status?: string; type?: string }) {
@@ -19,11 +19,36 @@ export interface DeviceDetail {
   device: Device;
   trajectory: Array<{ time: string; position: { x: number; y: number; z: number }; status: string | null; battery: number | null }>;
   alerts: Array<{ id: string; level: string; category: string; message: string; status: string; created_at: string; resolved_at: string | null }>;
-  executions: Array<{ id: string; execution_id: string; task_id: string; task_code: string; task_name: string; state: string; progress: number; failure_code: string | null; dispatched_at: string; started_at: string | null; completed_at: string | null }>;
+  executions: Array<{ id: string; execution_id: string; task_id: string; task_code: string; task_name: string; state: string; protocol_version: 'v1' | 'v2'; phase: MissionPhase; phase_sequence: number; phase_progress: number; progress: number; failure_code: string | null; dispatched_at: string; started_at: string | null; completed_at: string | null }>;
+}
+
+export interface DeviceCameraState {
+  available: boolean;
+  enabled: boolean;
+  is_online: boolean;
+  stream_url: string | null;
+  stream_protocol: 'hls' | 'mp4' | null;
+}
+
+export interface DeviceCameraControlResult {
+  ok: boolean;
+  device_id: string;
+  command: 'camera_enable' | 'camera_disable';
+  command_id: string;
+  delivery: 'queued';
+  camera: DeviceCameraState;
 }
 
 export function getDeviceDetail(id: string, hours = 24) {
   return apiGet<DeviceDetail>(`/devices/${id}/detail?hours=${hours}`);
+}
+
+export function getDeviceCamera(id: string) {
+  return apiGet<DeviceCameraState>(`/devices/${id}/camera`);
+}
+
+export function setDeviceCameraEnabled(id: string, enabled: boolean) {
+  return apiPost<DeviceCameraControlResult>(`/devices/${id}/camera/control`, { enabled });
 }
 
 export function requestManualCalibration(id: string) {

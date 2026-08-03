@@ -26,7 +26,7 @@ export function TopBar() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const online = devices.filter((device) => device.status !== 'fault' && device.status !== 'maintenance').length;
+  const online = devices.filter((device) => device.connection_status === 'online').length;
   const faults = devices.filter((device) => device.status === 'fault').length;
 
   const switchView = async (view: typeof currentView) => {

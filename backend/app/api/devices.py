@@ -11,19 +11,22 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.coordinates import MAP_FRAME_CONVENTION, ensure_map_frame
 from app.core.database import get_db
 from app.core.security import require
-from app.models.models import Alert, Device, DeviceCommand, DeviceEvent, MaintenanceWorkOrder, MissionExecution, Task
+from app.models.models import Alert, Device, DeviceCommand, DeviceEvent, DeviceWorkCapacity, MaintenanceWorkOrder, MapPoint, MissionExecution, Project, Task
 from app.services.runtime import ESTOP_STATE_KEY, get_runtime
+from app.services.device_connectivity import connection_status
 from app.services.fleet_commands import apply_execution_telemetry, queue_command
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
 PENDING_COMMAND_STATUSES = ("pending", "delivered")
+DEVICE_CODE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,31}$"
 
 
 def _now() -> datetime:
@@ -49,15 +52,38 @@ async def require_gateway_api_key(
 
 
 class GatewayPosition(BaseModel):
-    x: float = Field(description="地图坐标系中的 X 坐标，单位为米。")
-    y: float = Field(description="地图坐标系中的 Y 坐标，单位为米。")
-    z: float = Field(default=0.0, description="地图坐标系中的 Z 坐标，单位为米。")
+    x: float = Field(description="项目地图坐标系中的 X 坐标，单位为米；+X 沿项目约定的现场基准方向。")
+    y: float = Field(description="项目地图坐标系中的 Y 坐标，单位为米；从 +Z 俯视时，+Y 位于 +X 逆时针 90 度方向。")
+    z: float = Field(default=0.0, description="项目地图坐标系中的 Z 坐标，单位为米；+Z 竖直向上。")
+
+
+class GatewayWorkCapacity(BaseModel):
+    """One verifiable throughput declaration used by the cluster resource planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capability_code: str = Field(min_length=1, max_length=64, description="产能对应的工序或能力编码，例如 ground_leveling。")
+    output_unit: str = Field(min_length=1, max_length=32, description="产能和任务交付量使用的同一单位，例如 ㎡、m³、t 或 km。")
+    rate_per_hour: float = Field(gt=0, description="该设备在当前作业条件下每小时可完成的真实工作量，不得估造。")
+    source: Literal["manufacturer_rated", "field_calibrated", "telemetry_observed", "contract_verified"] = Field(
+        description="产能来源：厂家额定、现场标定、真实遥测统计或合同核验。"
+    )
+    evidence_ref: str = Field(min_length=1, max_length=256, description="可审计证据引用，如标定报告、统计批次或合同条款编号。")
+    reported_at: datetime = Field(description="设备网关确认该产能的时间，使用带时区的 ISO 8601 时间。")
+    measured_at: datetime | None = Field(default=None, description="现场标定或遥测统计的测量时间；未知时可省略。")
+    sample_count: int | None = Field(default=None, ge=1, description="遥测统计样本数量；非统计来源可省略。")
+    valid_until: datetime | None = Field(default=None, description="产能有效截止时间；省略表示持续有效直至网关更新。")
 
 
 class GatewayRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=1, max_length=32, description="设备唯一编码；注册后作为网关接口中的 device_code 使用。")
+    code: str = Field(
+        min_length=1,
+        max_length=32,
+        pattern=DEVICE_CODE_PATTERN,
+        description="设备唯一编码；仅允许字母、数字、点、下划线、冒号和连字符，注册后作为网关接口中的 device_code 使用。",
+    )
     name: str = Field(min_length=1, max_length=64, description="设备显示名称。")
     type: str = Field(min_length=1, max_length=32, description="设备类型编码，用于调度匹配和设备筛选。")
     model: str | None = Field(default=None, max_length=64, description="设备厂商型号；未知时可省略。")
@@ -65,17 +91,47 @@ class GatewayRegistration(BaseModel):
         default_factory=dict,
         description="设备能力声明；支持的工序可通过 processes 字符串数组提供。",
     )
+    work_capacities: list[GatewayWorkCapacity] = Field(
+        default_factory=list,
+        description="可用于集群资源计划的真实单位产能声明；未提供的设备仍可接入，但不会计入工作量覆盖计算。",
+    )
     section_tags: dict[str, Any] = Field(default_factory=dict, description="设备所属区域或业务分组标签。")
     permissions: dict[str, Any] = Field(default_factory=dict, description="设备侧声明的操作权限或限制条件。")
     section_id: str | None = Field(default=None, max_length=32, description="设备当前所属施工区域编码。")
     health: dict[str, Any] = Field(default_factory=dict, description="设备注册时上报的真实健康状态。")
-    protocol_version: str = Field(default="v1", max_length=32, description="设备网关协议版本。")
+    protocol_version: Literal["v1", "v2"] = Field(
+        default="v1",
+        description="设备网关协议版本；需要结构化作业和返航编排的设备必须声明 v2。",
+    )
 
 
 class GatewayMissionUpdate(BaseModel):
     execution_id: str = Field(min_length=1, max_length=96, description="任务下发命令中携带的执行实例标识。")
     state: Literal["accepted", "running", "paused", "completed", "failed", "cancelled"] = Field(
         description="设备确认的任务执行状态。"
+    )
+    phase: Literal[
+        "preparing",
+        "navigating_to_target",
+        "arrived_at_target",
+        "working",
+        "work_completed",
+        "returning",
+        "returned",
+    ] | None = Field(
+        default=None,
+        description="任务内部执行阶段；v2 设备必须按顺序报告准备、前往、到达、作业和可选返航阶段。",
+    )
+    phase_sequence: int | None = Field(
+        default=None,
+        ge=0,
+        description="v2 任务阶段单调递增序号；同序号只允许内容完全相同的幂等重传。",
+    )
+    phase_progress: float | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="当前任务阶段内部进度百分比，范围 0 至 100。",
     )
     progress: float | None = Field(default=None, ge=0, le=100, description="任务执行进度百分比，范围 0 至 100。")
     completed_qty: float | None = Field(default=None, ge=0, description="已完成工作量，单位沿用对应任务的交付单位。")
@@ -99,15 +155,25 @@ class GatewayOperationalMetrics(BaseModel):
     localization_drift_meters: float | None = Field(default=None, ge=0, description="设备当前定位漂移量，单位为米。")
 
 
+class GatewayCameraTelemetry(BaseModel):
+    """Browser-playable camera state reported by a robot gateway."""
+
+    enabled: bool = Field(description="摄像头传感器当前是否已通电开启。")
+    is_online: bool = Field(default=True, description="摄像头传感器当前是否可连接。")
+    stream_url: str | None = Field(default=None, max_length=1024, description="供运维浏览器播放的 HLS 或 MP4 视频流地址。")
+    stream_protocol: Literal["hls", "mp4"] | None = Field(default=None, description="stream_url 对应的浏览器播放协议。")
+
+
 class GatewayTelemetry(BaseModel):
     """Gateway-neutral telemetry. Additional vendor metrics are retained in the event payload."""
 
     model_config = ConfigDict(extra="allow")
+    camera: GatewayCameraTelemetry | None = Field(default=None, description="机器人摄像头传感器状态及浏览器可播放的视频流信息。")
 
     event_id: str = Field(min_length=1, max_length=96, description="遥测事件幂等标识；同一设备重复上报相同值时不会重复写入。")
     boot_id: str = Field(min_length=1, max_length=96, description="设备本次启动实例标识；每次设备或网关重启后应更换。")
     sequence: int = Field(ge=0, description="本次启动实例内单调递增的遥测序号。")
-    frame_id: str = Field(default="map", min_length=1, max_length=64, description="position 坐标采用的坐标系名称。")
+    frame_id: str = Field(default="map", min_length=1, max_length=64, description=f"position 坐标采用的项目地图坐标系名称。{MAP_FRAME_CONVENTION}")
     schema_version: str = Field(default="v1", min_length=1, max_length=32, description="遥测数据结构版本。")
     status: str | None = Field(default=None, min_length=1, max_length=16, description="设备当前运行状态编码。")
     battery: float | None = Field(default=None, ge=0, le=100, description="设备剩余电量百分比，范围 0 至 100。")
@@ -130,6 +196,7 @@ class GatewayCommandAck(BaseModel):
 
 class GatewayCalibrationReport(BaseModel):
     event_id: str = Field(min_length=1, max_length=96, description="校准事件幂等标识。")
+    frame_id: str = Field(default="map", min_length=1, max_length=64, description=f"校准位置采用的项目地图坐标系名称。{MAP_FRAME_CONVENTION}")
     qrcode_id: str | None = Field(default=None, max_length=96, description="自动校准使用的二维码或定位标记标识。")
     source: Literal["automatic", "manual"] = Field(description="校准来源：automatic 为设备自动校准，manual 为人工触发校准。")
     observed_at: datetime = Field(description="设备完成校准的时间，使用带时区的 ISO 8601 时间。")
@@ -145,6 +212,15 @@ async def _gateway_device(db: AsyncSession, device_code: str) -> Device:
     if device is None:
         raise HTTPException(status_code=404, detail="device is not registered")
     return device
+
+
+async def _active_map_frame(db: AsyncSession) -> str:
+    project = await db.scalar(
+        select(Project).where(Project.is_active.is_(True)).order_by(Project.created_at.desc()).limit(1)
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="项目尚未初始化，不能接收地图坐标")
+    return project.map_frame
 
 
 def _hash_gateway_key(value: str) -> str:
@@ -259,6 +335,45 @@ def _metrics_dict(metrics: GatewayOperationalMetrics | None) -> dict[str, Any]:
     return metrics.model_dump(exclude_none=True) if metrics else {}
 
 
+def _camera_capability(device: Device) -> dict[str, Any] | None:
+    """Read the optional camera declaration from a gateway's capabilities."""
+
+    camera = (device.capabilities or {}).get("camera")
+    if camera is True:
+        return {}
+    return dict(camera) if isinstance(camera, dict) else None
+
+
+def _camera_state(device: Device) -> dict[str, Any]:
+    """Return a safe browser-view of the robot's camera module."""
+
+    capability = _camera_capability(device)
+    telemetry = (device.operational_metrics or {}).get("camera")
+    reported = dict(telemetry) if isinstance(telemetry, dict) else {}
+    if capability is None:
+        return {
+            "available": False,
+            "enabled": False,
+            "is_online": False,
+            "stream_url": None,
+            "stream_protocol": None,
+        }
+
+    stream_url = reported.get("stream_url") or capability.get("stream_url")
+    protocol = reported.get("stream_protocol") or capability.get("stream_protocol")
+    if protocol not in {"hls", "mp4"}:
+        protocol = "hls" if isinstance(stream_url, str) and ".m3u8" in stream_url.lower() else "mp4"
+    enabled = bool(reported.get("enabled", False))
+    return {
+        "available": True,
+        "enabled": enabled,
+        "is_online": bool(reported.get("is_online", enabled)),
+        # Do not disclose a media address until the hardware reports that the sensor is on.
+        "stream_url": stream_url if enabled and isinstance(stream_url, str) else None,
+        "stream_protocol": protocol if enabled and isinstance(stream_url, str) else None,
+    }
+
+
 async def _create_maintenance_reminders(db: AsyncSession, device: Device) -> None:
     """Create one durable work order per configured, actually reported threshold."""
 
@@ -361,6 +476,7 @@ async def register_gateway_device(
             health=health,
             status="idle",
             last_heartbeat=_now(),
+            protocol_version=req.protocol_version,
             gateway_key_hash=_hash_gateway_key(enrollment_key := secrets.token_urlsafe(32)),
         )
         db.add(device)
@@ -375,13 +491,38 @@ async def register_gateway_device(
         device.section_id = req.section_id
         device.health = health
         device.last_heartbeat = _now()
+        device.protocol_version = req.protocol_version
     await db.flush()
+    await db.execute(delete(DeviceWorkCapacity).where(DeviceWorkCapacity.device_id == device.id))
+    db.add_all(
+        [
+            DeviceWorkCapacity(
+                device_id=device.id,
+                capability_code=capacity.capability_code,
+                output_unit=capacity.output_unit,
+                rate_per_hour=capacity.rate_per_hour,
+                source=capacity.source,
+                evidence_ref=capacity.evidence_ref,
+                reported_at=capacity.reported_at,
+                measured_at=capacity.measured_at,
+                sample_count=capacity.sample_count,
+                valid_until=capacity.valid_until,
+            )
+            for capacity in req.work_capacities
+        ]
+    )
     db.add(
         DeviceEvent(
             time=_now(),
             device_id=device.id,
             event_type="registration",
-            payload={"created": created, "model": device.model, "capabilities": device.capabilities},
+            payload={
+                "created": created,
+                "model": device.model,
+                "capabilities": device.capabilities,
+                "work_capacity_count": len(req.work_capacities),
+                "protocol_version": device.protocol_version,
+            },
         )
     )
     await db.commit()
@@ -411,6 +552,7 @@ async def report_gateway_telemetry(
 ) -> dict:
     """Persist a device heartbeat and the latest operational state."""
     device = await _require_device_key(db, device_code, x_device_gateway_key)
+    ensure_map_frame(req.frame_id, await _active_map_frame(db))
     received_at = _now()
     if req.observed_at and req.observed_at > received_at + timedelta(seconds=settings.gateway_telemetry_future_tolerance_seconds):
         raise HTTPException(status_code=422, detail="observed_at exceeds allowed future tolerance")
@@ -443,8 +585,12 @@ async def report_gateway_telemetry(
         device.health = {"connection": "ok", **req.health}
     else:
         device.health = {**device.health, "connection": "ok"}
+    incoming_metrics = _metrics_dict(req.metrics)
+    if req.camera is not None:
+        incoming_metrics["camera"] = req.camera.model_dump(exclude_none=True)
+    if incoming_metrics:
+        device.operational_metrics = {**device.operational_metrics, **incoming_metrics}
     if req.metrics is not None:
-        device.operational_metrics = {**device.operational_metrics, **_metrics_dict(req.metrics)}
         await _create_maintenance_reminders(db, device)
     device.last_heartbeat = received_at
 
@@ -464,6 +610,9 @@ async def report_gateway_telemetry(
             result=req.mission.result,
             failure_code=req.mission.failure_code,
             estimated_completion_at=req.mission.estimated_completion_at,
+            phase=req.mission.phase,
+            phase_sequence=req.mission.phase_sequence,
+            phase_progress=req.mission.phase_progress,
         )
     db.add(
         DeviceEvent(
@@ -509,6 +658,7 @@ async def report_gateway_calibration(
     """Record the outcome of a real QR/manual localization correction."""
 
     device = await _require_device_key(db, device_code, x_device_gateway_key)
+    ensure_map_frame(req.frame_id, await _active_map_frame(db))
     duplicate = await db.scalar(
         select(DeviceEvent).where(DeviceEvent.device_id == device.id, DeviceEvent.event_id == req.event_id)
     )
@@ -559,6 +709,7 @@ async def request_manual_calibration(
     device = await db.get(Device, device_id)
     if device is None or not device.gateway_enabled:
         raise HTTPException(status_code=404, detail="device was not found or is disabled")
+    frame_id = await _active_map_frame(db)
     queued = await queue_command(
         db,
         device,
@@ -566,7 +717,7 @@ async def request_manual_calibration(
         source="operator",
         priority=95,
         idempotency_key=f"manual-calibration:{device.id}:{uuid.uuid4()}",
-        payload={"source": "manual", "frame_id": "map"},
+        payload={"source": "manual", "frame_id": frame_id},
     )
     return {"ok": True, "device_id": str(device.id), "command_id": str(queued.id), "delivery": "queued"}
 
@@ -602,7 +753,7 @@ async def pull_gateway_commands(
     )
     commands = result.scalars().all()
     delivered_at = _now()
-    for command in commands:
+    for command_index, command in enumerate(commands, start=1):
         if command.last_delivered_at is None or command.last_delivered_at <= delivered_at - timedelta(seconds=settings.gateway_command_delivery_timeout_seconds):
             command.status = "delivered"
             command.delivered_at = command.delivered_at or delivered_at
@@ -610,7 +761,7 @@ async def pull_gateway_commands(
             command.delivery_attempts += 1
             db.add(
                 DeviceEvent(
-                    time=_now(),
+                    time=delivered_at + timedelta(microseconds=command_index),
                     device_id=device.id,
                     event_type="command_delivered",
                     payload={"command_id": str(command.id), "command": command.command},
@@ -656,6 +807,35 @@ async def acknowledge_gateway_command(
     command.status = req.status
     command.acknowledged_at = _now()
     command.acknowledgement = acknowledgement
+    if req.status == "acknowledged" and command.command in {"camera_enable", "camera_disable"}:
+        current_camera = (device.operational_metrics or {}).get("camera")
+        camera_state = dict(current_camera) if isinstance(current_camera, dict) else {}
+        camera_state["enabled"] = command.command == "camera_enable"
+        camera_state["is_online"] = True
+        device.operational_metrics = {**(device.operational_metrics or {}), "camera": camera_state}
+    rejected_execution = None
+    if (
+        req.status == "failed"
+        and command.command == "mission_start"
+        and command.mission_execution_id is not None
+    ):
+        execution = await db.get(MissionExecution, command.mission_execution_id)
+        if execution is not None and execution.state == "dispatched":
+            rejected_execution = execution
+            execution.state = "failed"
+            execution.failure_code = "mission_start_rejected"
+            execution.completed_at = _now()
+            execution.result = {
+                **(execution.result or {}),
+                "command_acknowledgement": acknowledgement,
+            }
+            task = await db.get(Task, execution.task_id)
+            if task is not None:
+                task.status = "pending"
+                task.device_id = None
+                task.dispatch_state = "waiting_device"
+                task.dispatch_reason = "mission_start_rejected"
+                task.current_phase = None
     db.add(
         DeviceEvent(
             time=_now(),
@@ -664,6 +844,9 @@ async def acknowledge_gateway_command(
             payload={"command_id": str(command.id), "command": command.command, **acknowledgement},
         )
     )
+    if rejected_execution is not None:
+        await db.flush()
+        await _publish_execution_task_update(db, rejected_execution)
     return {"ok": True, "command_id": str(command.id), "status": command.status}
 
 
@@ -767,7 +950,12 @@ async def get_device_detail(
             {
                 "id": str(execution.id), "execution_id": execution.gateway_execution_id,
                 "task_id": str(task.id), "task_code": task.code, "task_name": task.name,
-                "state": execution.state, "progress": execution.progress,
+                "state": execution.state,
+                "protocol_version": execution.protocol_version,
+                "phase": execution.phase,
+                "phase_sequence": execution.phase_sequence,
+                "phase_progress": execution.phase_progress,
+                "progress": execution.progress,
                 "failure_code": execution.failure_code,
                 "dispatched_at": execution.dispatched_at.isoformat(),
                 "started_at": execution.started_at.isoformat() if execution.started_at else None,
@@ -775,6 +963,64 @@ async def get_device_detail(
             }
             for execution, task in executions.all()
         ],
+    }
+
+
+class CameraControlRequest(BaseModel):
+    enabled: bool = Field(description="期望设置的机器人摄像头传感器通电状态。")
+
+
+@router.get(
+    "/{device_id}/camera",
+    summary="查询机器人摄像头传感器状态",
+    description="返回机器人已声明摄像头模块的开关、在线状态和确认开启后可用的视频流信息。",
+    response_description="机器人摄像头传感器当前状态。",
+)
+async def get_device_camera(
+    device_id: Annotated[uuid.UUID, Path(description="目标机器人的 UUID。")],
+    db: AsyncSession = Depends(get_db),
+    _role=Depends(require("read")),
+) -> dict:
+    device = await db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="device was not found")
+    return _camera_state(device)
+
+
+@router.post(
+    "/{device_id}/camera/control",
+    summary="开启或关闭机器人摄像头传感器",
+    description="向已声明摄像头模块的机器人写入启停命令；命令入队不代表硬件已执行，实际状态以网关确认或遥测为准。",
+    response_description="摄像头控制命令入队结果及当前确认状态。",
+)
+async def control_device_camera(
+    device_id: Annotated[uuid.UUID, Path(description="目标机器人的 UUID。")],
+    req: Annotated[CameraControlRequest, Body(description="期望设置的摄像头传感器通电状态。")],
+    db: AsyncSession = Depends(get_db),
+    _role=Depends(require("device.camera.control")),
+) -> dict:
+    device = await db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="device was not found")
+    if _camera_capability(device) is None:
+        raise HTTPException(status_code=409, detail="device does not declare a camera sensor")
+
+    command = "camera_enable" if req.enabled else "camera_disable"
+    queued = await queue_command(
+        db,
+        device,
+        command,
+        payload={"sensor": "camera", "enabled": req.enabled},
+        source="operator",
+        priority=90,
+    )
+    return {
+        "ok": True,
+        "device_id": str(device.id),
+        "command": command,
+        "command_id": str(queued.id),
+        "delivery": "queued",
+        "camera": _camera_state(device),
     }
 
 
@@ -867,20 +1113,10 @@ async def _publish_execution_task_update(db: AsyncSession, execution: MissionExe
     task = await db.get(Task, execution.task_id)
     if task is None:
         return
+    from app.api.tasks import _task_dict
     from app.core.redis import CHANNEL_TASKS, redis
 
-    payload = {
-        "id": str(task.id), "code": task.code, "name": task.name, "process_id": task.process_id,
-        "device_id": str(task.device_id) if task.device_id else None, "status": task.status,
-        "priority": task.priority, "map_point_id": str(task.map_point_id) if task.map_point_id else None,
-        "progress": task.progress, "dependencies": task.dependencies or [], "estimated_duration": task.estimated_duration,
-        "planned_start": task.planned_start.isoformat() if task.planned_start else None,
-        "planned_end": task.planned_end.isoformat() if task.planned_end else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        "deliverable_qty": task.deliverable_qty, "deliverable_unit": task.deliverable_unit,
-        "completed_qty": task.completed_qty, "stage": task.stage, "params": task.params or {},
-    }
+    payload = _task_dict(task)
     await redis().publish(CHANNEL_TASKS, json.dumps({"channel": CHANNEL_TASKS, "data": {"type": "task_updated", **payload}}))
 
 
@@ -891,14 +1127,30 @@ def _device_dict(d: Device) -> dict:
         "name": d.name,
         "type": d.type,
         "model": d.model,
+        "protocol_version": d.protocol_version,
         "status": d.status,
         "battery": d.battery,
         "position": {"x": d.position_x, "y": d.position_y, "z": d.position_z},
         "section_id": d.section_id,
         "capabilities": d.capabilities,
+        "work_capacities": [
+            {
+                "capability_code": capacity.capability_code,
+                "output_unit": capacity.output_unit,
+                "rate_per_hour": capacity.rate_per_hour,
+                "source": capacity.source,
+                "evidence_ref": capacity.evidence_ref,
+                "reported_at": capacity.reported_at.isoformat(),
+                "measured_at": capacity.measured_at.isoformat() if capacity.measured_at else None,
+                "sample_count": capacity.sample_count,
+                "valid_until": capacity.valid_until.isoformat() if capacity.valid_until else None,
+            }
+            for capacity in d.work_capacities
+        ],
         "health": d.health,
         "operational_metrics": d.operational_metrics or {},
         "current_task": (d.operational_metrics or {}).get("current_task"),
         "task_progress": (d.operational_metrics or {}).get("task_progress"),
         "last_heartbeat": d.last_heartbeat.isoformat() if d.last_heartbeat else None,
+        "connection_status": connection_status(d.last_heartbeat),
     }

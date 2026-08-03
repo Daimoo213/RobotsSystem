@@ -12,7 +12,7 @@ export const STAGES = [
 /** 设备类型标签 */
 export const DEVICE_TYPE_LABELS: Record<string, string> = {
   agv: '自动运输车', excavator: '挖掘机', crane: '吊车',
-  masonry: '砌筑机器人', inspect: '巡检机器人',
+  masonry: '砌筑机器人', inspect: '巡检机器人', inspection: '巡检机器人',
 };
 
 /** 设备状态标签 */
@@ -25,7 +25,28 @@ export const DEVICE_STATUS_LABELS: Record<string, string> = {
 /** 任务状态标签；接口内部仍使用英文编码。 */
 export const TASK_STATUS_LABELS: Record<string, string> = {
   pending: '待开始', assigned: '已分配', running: '进行中', paused: '已暂停',
-  completed: '已完成', failed: '执行失败', cancelled: '已取消',
+  completed: '已完成', failed: '执行失败', cancel_requested: '取消请求中', cancelled: '已取消', reassign_pending: '等待改派',
+};
+
+export const DISPATCH_STATE_LABELS: Record<string, string> = {
+  waiting_dependencies: '等待前置任务', waiting_schedule: '等待计划时间', waiting_device: '等待合适设备',
+  waiting_planning_input: '等待补充规划条件', waiting_capacity: '等待产能资源',
+  dispatched: '已派发', cancelling: '取消请求中', cancelled: '已取消', finished: '已闭环', failed: '派发失败',
+};
+
+export const DISPATCH_REASON_LABELS: Record<string, string> = {
+  dependencies_incomplete: '前置任务尚未完成', planned_start_not_reached: '尚未到计划开始时间',
+  awaiting_candidate: '正在匹配可用设备', no_enabled_device: '没有已启用设备',
+  no_compatible_device: '没有能力和点位均匹配的设备', compatible_devices_offline: '匹配设备当前离线',
+  compatible_devices_busy: '匹配设备正在执行其他任务', compatible_devices_low_battery: '匹配设备电量不足',
+  waiting_previous_device_cancel: '等待原设备确认取消', waiting_reassignment_target: '等待改派设备可用',
+  mission_cancelled: '上次执行已取消，等待重新派发', mission_start_rejected: '设备拒绝启动，等待重新派发',
+  device_reported_failure: '设备报告执行失败',
+  planning_input_required: '缺少交付量、计划窗口或资源需求', planning_window_required: '缺少计划开始或结束时间',
+  planned_end_passed: '计划结束时间已过，无法承诺按期完成', no_available_working_time: '没有可用作业时间',
+  insufficient_capacity: '当前真实设备产能不足', no_valid_capacity_device: '没有登记有效真实产能的匹配设备',
+  allocation_replanning: '执行单元变化，正在按剩余工作量重新规划',
+  waiting_device_cancel: '已下发取消命令，等待设备遥测确认', operator_cancelled: '任务已由操作员取消',
 };
 
 /** 任务执行状态标签。 */
@@ -33,6 +54,11 @@ export const MISSION_STATE_LABELS: Record<string, string> = {
   dispatched: '已下发', accepted: '已接受', running: '运行中', paused: '已暂停',
   completed: '已完成', failed: '执行失败', cancelled: '已取消',
   pause_requested: '暂停请求中', resume_requested: '恢复请求中', cancel_requested: '取消请求中',
+};
+
+export const MISSION_PHASE_LABELS: Record<string, string> = {
+  preparing: '准备执行', navigating_to_target: '前往目标', arrived_at_target: '已到达目标',
+  working: '正在作业', work_completed: '作业已完成', returning: '正在返回', returned: '已返回',
 };
 
 /** 告警级别和处理状态标签。 */
@@ -53,7 +79,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   alert: '告警', charging: '充电', sync: '同步', normal: '普通', update: '更新',
   completed: '已完成', task_created: '任务已创建', task_assigned: '任务已分配',
   task_completed: '任务已完成', task_reassigned: '任务已改派', task_paused: '任务已暂停',
-  task_resumed: '任务已恢复', task_deleted: '任务已删除',
+  task_resumed: '任务已恢复', task_waiting: '任务等待调度', task_deleted: '任务已删除',
 };
 
 /** 控制命令显示标签。 */
@@ -87,7 +113,7 @@ export const COLORS = {
 export const STATUS_COLORS: Record<string, string> = {
   idle: COLORS.gray, charging: COLORS.blue, moving: COLORS.cyan,
   working: COLORS.green, paused: COLORS.amber, maintenance: COLORS.amber,
-  occupancy: COLORS.purple, fault: COLORS.red,
+  occupancy: COLORS.purple, fault: COLORS.red, offline: COLORS.red,
 };
 
 /** 告警级别颜色 */
@@ -166,6 +192,7 @@ export const FILTER_CHIPS = [
   { id: 'idle', label: '待机', color: COLORS.gray },
   { id: 'charging', label: '充电', color: COLORS.blue },
   { id: 'fault', label: '故障', color: COLORS.red },
+  { id: 'offline', label: '离线', color: COLORS.red },
   { id: 'occupancy', label: '维修占用', color: COLORS.purple },
 ] as const;
 

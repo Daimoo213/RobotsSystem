@@ -31,7 +31,7 @@ export function useWebSocket() {
       const msg = data as { type?: string; id?: string; [key: string]: unknown };
       if (!msg?.type) return;
 
-      if (msg.type === 'task_created' || msg.type === 'task_assigned' || msg.type === 'task_completed') {
+      if (msg.type === 'task_created' || msg.type === 'task_assigned' || msg.type === 'task_completed' || msg.type === 'task_waiting' || msg.type === 'task_reassigned' || msg.type === 'task_resource_plan_updated' || msg.type === 'task_schedule_updated' || msg.type === 'task_cancel_requested' || msg.type === 'task_cancelled') {
         // 完整任务对象在 data 里
         const task = data as unknown as Task;
         if (task?.id) {

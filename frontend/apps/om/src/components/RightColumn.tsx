@@ -56,7 +56,7 @@ export function RightColumn() {
   }));
 
   return (
-    <div className="flex h-full flex-col gap-2 overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
       <Panel title={`集群协同拓扑 (${topologyNodes.length})`}>
         <div className="relative h-32 flex items-center justify-center">
           <svg width="100%" height="100%" viewBox="0 0 200 120">

@@ -11,6 +11,7 @@ interface OmState {
   alerts: Alert[];
   events: RealtimeEvent[];
   pointcloud: PointCloudData | null;
+  mappingEnabled: boolean;
   estopActive: boolean;
   estopSource: string | null;
   currentView: ViewMode;
@@ -23,6 +24,7 @@ interface OmState {
   upsertAlert: (a: Alert) => void;
   addEvent: (e: RealtimeEvent) => void;
   setPointcloud: (p: PointCloudData) => void;
+  setMappingEnabled: (enabled: boolean) => void;
   setEstop: (active: boolean, source?: string) => void;
   setView: (v: ViewMode) => void;
   setEnergyView: (view: EnergyView | null) => void;
@@ -36,6 +38,7 @@ export const useOmStore = create<OmState>((set) => ({
   alerts: [],
   events: [],
   pointcloud: null,
+  mappingEnabled: false,
   estopActive: false,
   estopSource: null,
   currentView: 'dispatch',
@@ -55,6 +58,7 @@ export const useOmStore = create<OmState>((set) => ({
   }),
   addEvent: (event) => set((s) => ({ events: [event, ...s.events].slice(0, 50) })),
   setPointcloud: (pointcloud) => set({ pointcloud }),
+  setMappingEnabled: (mappingEnabled) => set({ mappingEnabled }),
   setEstop: (active, source) => set({ estopActive: active, estopSource: source || null }),
   setView: (currentView) => set({ currentView }),
   setEnergyView: (energyView) => set({ energyView }),

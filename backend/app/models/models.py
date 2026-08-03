@@ -10,13 +10,16 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -74,10 +77,14 @@ class Device(Base):
     # retained in DeviceEvent; this field only accelerates dashboard queries.
     operational_metrics: Mapped[dict] = mapped_column(JSONB, default=dict)
     gateway_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    protocol_version: Mapped[str] = mapped_column(String(16), default="v1", index=True)
     gateway_key_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     gateway_key_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 关联
+    work_capacities: Mapped[list["DeviceWorkCapacity"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", lazy="selectin"
+    )
     events: Mapped[list["DeviceEvent"]] = relationship(back_populates="device", lazy="dynamic")
     alerts: Mapped[list["Alert"]] = relationship(back_populates="device", lazy="dynamic")
     tasks: Mapped[list["Task"]] = relationship(back_populates="device", lazy="dynamic")
@@ -101,16 +108,28 @@ class Task(Base):
     map_point_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("map_points.id"), nullable=True
     )
+    return_point_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("map_points.id"), nullable=True
+    )
+    return_policy: Mapped[str] = mapped_column(String(24), default="stay")
+    work_parameters: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    dispatch_state: Mapped[str] = mapped_column(String(32), default="waiting_device", index=True)
+    dispatch_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dispatch_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_dispatch_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_phase: Mapped[str | None] = mapped_column(String(32), nullable=True)
     priority: Mapped[int] = mapped_column(Integer, default=50)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     dependencies: Mapped[list] = mapped_column(JSONB, default=list)  # task ids
     params: Mapped[dict] = mapped_column(JSONB, default=dict)
     estimated_duration: Mapped[int] = mapped_column(Integer, default=60)  # 预估工期(分钟)
+    schedule_mode: Mapped[str] = mapped_column(String(16), default="auto", server_default="auto", index=True)
     planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     planned_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 交付结果量化
     deliverable_qty: Mapped[float | None] = mapped_column(Float, nullable=True)  # 计划交付量
@@ -122,7 +141,130 @@ class Task(Base):
 
     # 关联
     device = relationship("Device", back_populates="tasks", lazy="selectin")
-    map_point = relationship("MapPoint", lazy="selectin")
+    map_point = relationship("MapPoint", foreign_keys=[map_point_id], lazy="selectin")
+    return_point = relationship("MapPoint", foreign_keys=[return_point_id], lazy="selectin")
+    resource_plan: Mapped["TaskResourcePlan | None"] = relationship(
+        back_populates="task", cascade="all, delete-orphan", uselist=False, lazy="selectin"
+    )
+    resource_requirements: Mapped[list["TaskResourceRequirement"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", lazy="selectin"
+    )
+    resource_allocations: Mapped[list["TaskResourceAllocation"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class DeviceWorkCapacity(Base):
+    """An auditable production-capacity declaration reported by one device gateway."""
+
+    __tablename__ = "device_work_capacities"
+    __table_args__ = (
+        UniqueConstraint("device_id", "capability_code", "output_unit", name="uq_device_work_capacity"),
+        Index("ix_device_work_capacities_capability_unit", "capability_code", "output_unit"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    capability_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    output_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    rate_per_hour: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    evidence_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    device: Mapped[Device] = relationship(back_populates="work_capacities")
+
+
+class TaskResourcePlan(Base):
+    """Latest capacity plan for a business task; it never invents device output."""
+
+    __tablename__ = "task_resource_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="waiting_planning_input", index=True)
+    reason: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    required_rate_per_hour: Mapped[float | None] = mapped_column(Float, nullable=True)
+    planned_rate_per_hour: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    coverage_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    predicted_completion_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    summary: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    task: Mapped[Task] = relationship(back_populates="resource_plan")
+
+
+class TaskResourceRequirement(Base):
+    """One real capability/output requirement that must be covered for a task."""
+
+    __tablename__ = "task_resource_requirements"
+    __table_args__ = (Index("ix_task_resource_requirements_task_gate", "task_id", "is_completion_gate"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    capability_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    required_qty: Mapped[float] = mapped_column(Float, nullable=False)
+    output_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    completed_qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_completion_gate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    work_scope: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    task: Mapped[Task] = relationship(back_populates="resource_requirements")
+    allocations: Mapped[list["TaskResourceAllocation"]] = relationship(
+        back_populates="requirement", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class TaskResourceAllocation(Base):
+    """A per-device share of one task resource requirement."""
+
+    __tablename__ = "task_resource_allocations"
+    __table_args__ = (
+        Index("ix_task_resource_allocations_task_state", "task_id", "state"),
+        Index("ix_task_resource_allocations_device_state", "device_id", "state"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("task_resource_requirements.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False, index=True
+    )
+    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    planned_qty: Mapped[float] = mapped_column(Float, nullable=False)
+    completed_qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    rate_per_hour_snapshot: Mapped[float] = mapped_column(Float, nullable=False)
+    capacity_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    capacity_evidence_ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    capacity_reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    work_scope: Mapped[dict] = mapped_column(JSONB, default=dict)
+    available_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    predicted_finish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="planned", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    task: Mapped[Task] = relationship(back_populates="resource_allocations")
+    requirement: Mapped[TaskResourceRequirement] = relationship(back_populates="allocations")
+    device: Mapped[Device] = relationship(lazy="selectin")
+    executions: Mapped[list["MissionExecution"]] = relationship(back_populates="allocation", lazy="selectin")
 
 
 # ── Scripts (stage configs) ──────────────────────────────
@@ -166,6 +308,9 @@ class MapRegion(Base):
     name: Mapped[str] = mapped_column(String(64))
     region_type: Mapped[str] = mapped_column(String(32))  # work/restricted/stack/parking
     polygon: Mapped[list] = mapped_column(JSONB, default=list)  # [[x,y],...]
+    min_z: Mapped[float] = mapped_column(Float, default=0.0)
+    max_z: Mapped[float] = mapped_column(Float, default=0.5)
+    volumes: Mapped[list] = mapped_column(JSONB, default=list)  # [{polygon, min_z, max_z}, ...]
     stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     color: Mapped[str] = mapped_column(String(7), default="#2FD7FF", server_default="#2FD7FF")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -189,7 +334,39 @@ class MapPoint(Base):
     color: Mapped[str] = mapped_column(String(7), default="#2FD7FF", server_default="#2FD7FF")
 
     # 关联
-    tasks: Mapped[list["Task"]] = relationship(back_populates="map_point", lazy="dynamic")
+    tasks: Mapped[list["Task"]] = relationship(
+        back_populates="map_point", foreign_keys="Task.map_point_id", lazy="dynamic"
+    )
+
+
+class MapPath(Base):
+    """A real robot traversable path defined in the project's map frame."""
+
+    __tablename__ = "map_paths"
+    __table_args__ = (
+        CheckConstraint("min_width_m > 0", name="ck_map_paths_min_width_positive"),
+        CheckConstraint("max_slope_percent >= 0", name="ck_map_paths_max_slope_nonnegative"),
+        CheckConstraint(
+            "direction IN ('bidirectional', 'forward', 'reverse')",
+            name="ck_map_paths_direction",
+        ),
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_map_paths_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(64))
+    # Ordered [x, y, z] map coordinates. The elevation of each waypoint is
+    # part of the route geometry so uphill and downhill segments are explicit.
+    points: Mapped[list] = mapped_column(JSONB, default=list)
+    direction: Mapped[str] = mapped_column(String(16), default="bidirectional")
+    min_width_m: Mapped[float] = mapped_column(Float)
+    max_slope_percent: Mapped[float] = mapped_column(Float)
+    # An empty list means the path has no platform-side device-type restriction.
+    device_types: Mapped[list] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 # ── Cameras ──────────────────────────────────────────────
@@ -298,7 +475,12 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(128))
     location: Mapped[str | None] = mapped_column(String(256), nullable=True)
     map_frame: Mapped[str] = mapped_column(String(64), default="map")
+    map_grid_config: Mapped[dict] = mapped_column(JSONB, default=dict)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Hong_Kong")
+    # O&M controls whether the external mapping gateway may replace the
+    # persisted complete point-cloud map. It is disabled until explicitly
+    # enabled for a real mapping run.
+    mapping_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -313,6 +495,17 @@ class MissionExecution(Base):
     """
 
     __tablename__ = "mission_executions"
+    __table_args__ = (
+        Index(
+            "uq_mission_executions_active_device",
+            "device_id",
+            unique=True,
+            postgresql_where=text(
+                "state IN ('dispatched','accepted','running','paused',"
+                "'pause_requested','resume_requested','cancel_requested')"
+            ),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     task_id: Mapped[uuid.UUID] = mapped_column(
@@ -321,10 +514,21 @@ class MissionExecution(Base):
     device_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("devices.id"), nullable=False, index=True
     )
+    allocation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("task_resource_allocations.id"), nullable=True, index=True
+    )
     gateway_execution_id: Mapped[str] = mapped_column(String(96), unique=True)
+    protocol_version: Mapped[str] = mapped_column(String(16), default="v1", index=True)
     state: Mapped[str] = mapped_column(String(24), default="dispatched", index=True)
+    phase: Mapped[str] = mapped_column(String(32), default="preparing", index=True)
+    phase_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    phase_progress: Mapped[float] = mapped_column(Float, default=0.0)
+    phase_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     completed_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    planned_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rate_per_hour_snapshot: Mapped[float | None] = mapped_column(Float, nullable=True)
     result: Mapped[dict] = mapped_column(JSONB, default=dict)
     failure_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
     dispatched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -332,6 +536,8 @@ class MissionExecution(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    allocation: Mapped[TaskResourceAllocation | None] = relationship(back_populates="executions", lazy="selectin")
 
 
 class SafetyState(Base):
@@ -346,19 +552,21 @@ class SafetyState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
-class PointCloudSnapshot(Base):
-    """A real map/point-cloud snapshot supplied by an external mapping gateway."""
+class PointCloudMap(Base):
+    """The single complete point-cloud map supplied by the mapping gateway."""
 
-    __tablename__ = "pointcloud_snapshots"
+    __tablename__ = "pointcloud_maps"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    event_id: Mapped[str] = mapped_column(String(96), unique=True)
+    # The platform deliberately keeps one current map, not a collection of
+    # snapshots. A new upload atomically replaces this row.
+    scope: Mapped[str] = mapped_column(String(32), primary_key=True, default="current")
+    map_id: Mapped[str] = mapped_column(String(96), unique=True)
     source_id: Mapped[str] = mapped_column(String(96), index=True)
     frame_id: Mapped[str] = mapped_column(String(64), default="map")
     points: Mapped[list] = mapped_column(JSONB, default=list)
     # ``metadata`` is reserved by SQLAlchemy declarative models. Keep the
     # persisted column/API name while using a non-reserved Python attribute.
-    snapshot_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    map_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 

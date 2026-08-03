@@ -59,7 +59,7 @@ export const usePmStore = create<PmState>((set) => ({
     return { tasks: [...s.tasks, task] };
   }),
   updateTask: (task) => set((s) => ({
-    tasks: s.tasks.map((t) => (t.id === task.id ? task : t)),
+    tasks: s.tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)),
   })),
   removeTask: (taskId) => set((s) => ({
     tasks: s.tasks.filter((t) => t.id !== taskId),

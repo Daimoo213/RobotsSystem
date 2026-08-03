@@ -167,7 +167,7 @@ class AlertEngine:
             position = _position(state)
             for region in restricted_regions:
                 if position and _point_in_polygon(position, region.polygon or []):
-                    active_motion = state.get("status") in {"moving", "working"}
+                    active_motion = state.get("connection_status") != "offline" and state.get("status") in {"moving", "working"}
                     violations.append(
                         AlertViolation(
                             key=f"geofence_breach:{device_id}:{region.id}",
@@ -183,7 +183,7 @@ class AlertEngine:
         active_states = [
             state
             for state in normalized
-            if state.get("status") in {"moving", "working"} and _position(state)
+            if state.get("connection_status") != "offline" and state.get("status") in {"moving", "working"} and _position(state)
         ]
         for left, right in combinations(active_states, 2):
             left_id = _device_id(left)

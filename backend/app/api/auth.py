@@ -39,7 +39,7 @@ class InitialSetupRequest(BaseModel):
     project_code: str = Field(min_length=1, max_length=32, description="现场项目唯一编码。")
     project_name: str = Field(min_length=1, max_length=128, description="现场项目名称。")
     location: str | None = Field(default=None, max_length=256, description="项目所在地或现场地址。")
-    map_frame: str = Field(default="map", min_length=1, max_length=64, description="机器人、点位和地图统一使用的坐标系名称。")
+    map_frame: str = Field(default="map", min_length=1, max_length=64, description="机器人、点位和地图统一使用的右手笛卡尔坐标系名称；默认 map，单位为米，+Z 竖直向上。")
     timezone: str = Field(default="Asia/Hong_Kong", min_length=1, max_length=64, description="项目 IANA 时区名称，用于业务时间展示。")
     om: InitialUser = Field(description="首个 O&M 运维管理员账号。")
     pm: InitialUser = Field(description="首个 PM 项目管理员账号。")

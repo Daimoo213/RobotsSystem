@@ -94,9 +94,14 @@ export function getStatusColor(status: string): string {
     working: '#34DF9A', maintenance: '#FFB33D',
     occupancy: '#B56CFF', fault: '#FF5C6D',
     pending: '#3D8CFF', assigned: '#2FD7FF', running: '#34DF9A',
-    paused: '#FFB33D', completed: '#34DF9A', failed: '#FF5C6D',
+    paused: '#FFB33D', completed: '#34DF9A', failed: '#FF5C6D', offline: '#FF5C6D',
   };
   return map[status] || '#687988';
+}
+
+/** Prefer gateway connectivity over the robot's last reported operating state in the UI. */
+export function getDeviceDisplayStatus(status: string, connectionStatus?: string): string {
+  return connectionStatus === 'offline' ? 'offline' : status;
 }
 
 /** 获取健康指标颜色 */

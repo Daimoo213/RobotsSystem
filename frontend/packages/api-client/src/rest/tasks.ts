@@ -23,6 +23,8 @@ export function listProcesses() {
 export interface TaskCreateBody {
   name: string;
   process_id: string;
+  /** auto: 服务端根据依赖和资源可用性安排；fixed: 使用 planned_start。 */
+  schedule_mode?: 'auto' | 'fixed';
   map_point_id?: string;
   priority?: number;
   estimated_duration?: number;
@@ -34,6 +36,18 @@ export interface TaskCreateBody {
   stage?: string;
   required_device_type?: string;
   description?: string;
+  work_parameters?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
+  return_policy?: 'stay' | 'return_to_point';
+  return_point_id?: string;
+  resource_requirements?: Array<{
+    role_code: string;
+    capability_code: string;
+    required_qty: number;
+    output_unit: string;
+    is_completion_gate?: boolean;
+    work_scope?: Record<string, unknown>;
+  }>;
 }
 
 export function createTask(body: TaskCreateBody) {
@@ -46,6 +60,7 @@ export interface TaskUpdateBody {
   planned_start?: string;
   planned_end?: string;
   deliverable_qty?: number;
+  deliverable_unit?: string;
 }
 
 export function updateTask(id: string, body: TaskUpdateBody) {
@@ -56,6 +71,10 @@ export function reassignTask(taskId: string, deviceId: string) {
   return apiPost<Task>(`/tasks/${taskId}/reassign?device_id=${deviceId}`);
 }
 
+export function recalculateTaskResourcePlan(taskId: string) {
+  return apiPost<Task>(`/tasks/${taskId}/resource-plan/recalculate`);
+}
+
 export function pauseTask(taskId: string) {
   return apiPost(`/tasks/${taskId}/pause`);
 }
@@ -64,6 +83,19 @@ export function resumeTask(taskId: string) {
   return apiPost(`/tasks/${taskId}/resume`);
 }
 
+export interface TaskCancelResult {
+  ok: boolean;
+  task?: Task;
+}
+
+export function cancelTask(taskId: string) {
+  return apiPost<TaskCancelResult>(`/tasks/${taskId}/cancel`);
+}
+
+export interface TaskDeleteResult {
+  ok: boolean;
+}
+
 export function deleteTask(taskId: string) {
-  return apiDelete(`/tasks/${taskId}`);
+  return apiDelete<TaskDeleteResult>(`/tasks/${taskId}`);
 }

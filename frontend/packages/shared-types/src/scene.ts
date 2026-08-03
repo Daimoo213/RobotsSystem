@@ -8,8 +8,10 @@ export interface SceneModel {
 export interface SceneConfig {
   regions: import('./map').MapRegion[];
   points: import('./map').MapPoint[];
+  paths: import('./map').MapPath[];
   assets?: MapAsset[];
   frame_id: string;
+  grid_config: import('./map').GridMapConfig;
 }
 
 export interface MapAsset {

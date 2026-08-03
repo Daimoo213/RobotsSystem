@@ -1,19 +1,26 @@
-/** O&M端 Bottom device deck — 18 cards horizontal scroll. */
+/** O&M 端底部设备条。 */
 
 import { DeviceCard } from '@robots/ui';
 import { useOmStore } from '../stores/omStore';
 
 export function DeviceDeck() {
-  const { devices, selectDevice } = useOmStore();
-  const display = devices.slice(0, 18);
+  const { devices, selectedDeviceId, selectDevice } = useOmStore();
 
   return (
-    <div className="flex gap-2 overflow-x-auto py-1" style={{ minHeight: '90px' }}>
-      {display.length === 0 && (
-        <div className="flex w-full items-center justify-center text-[12px] text-[#5A7A92]">加载设备数据...</div>
+    <div
+      className="flex h-full snap-x snap-proximity items-stretch gap-2 overflow-x-auto overflow-y-hidden py-1.5 pr-1 [scrollbar-gutter:stable] overscroll-x-contain"
+      aria-label="设备列表"
+    >
+      {devices.length === 0 && (
+        <div className="flex w-full items-center justify-center text-[12px] text-[#5A7A92]">暂无已接入设备</div>
       )}
-      {display.map((d) => (
-        <DeviceCard key={d.id} device={d} onClick={() => selectDevice(d.id)} />
+      {devices.map((device) => (
+        <DeviceCard
+          key={device.id}
+          device={device}
+          selected={device.id === selectedDeviceId}
+          onClick={() => selectDevice(device.id)}
+        />
       ))}
     </div>
   );

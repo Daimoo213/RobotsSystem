@@ -1,6 +1,6 @@
 /** REST API: Reports, PointCloud, Estop, Ops */
 
-import { apiFetch, apiGet, apiPost, apiDelete } from './client';
+import { apiFetch, apiGet, apiPost, apiDelete, apiPatch } from './client';
 
 // Reports
 export function exportReport(params: {
@@ -15,7 +15,15 @@ export function exportReport(params: {
 
 // PointCloud
 export function getPointcloudStatus() {
-  return apiGet<{ source: string; active: boolean; points_count: number; progress: number }>('/pointcloud/status');
+  return apiGet<{
+    mapping_enabled: boolean;
+    source: string | null;
+    map_id: string | null;
+    active: boolean;
+    points_count: number;
+    progress: number;
+    updated_at: string | null;
+  }>('/pointcloud/status');
 }
 
 export function exportPdfReport(params: { date_from?: string; date_to?: string }) {
@@ -25,8 +33,28 @@ export function exportPdfReport(params: { date_from?: string; date_to?: string }
   return apiFetch<Blob>(`/reports/export-pdf?${qs.toString()}`, { method: 'POST' });
 }
 
-export function getLatestPointcloud() {
-  return apiGet<{ has_data: boolean; points: number[][]; total_count: number; progress: number; frame_id?: string; metadata?: Record<string, unknown> }>('/pointcloud/latest');
+export function getPointcloudMap() {
+  return apiGet<{
+    has_data: boolean;
+    mapping_enabled: boolean;
+    map_id?: string;
+    source_id?: string;
+    points: number[][];
+    total_count: number;
+    progress: number;
+    frame_id?: string;
+    metadata?: Record<string, unknown>;
+    observed_at?: string;
+    received_at?: string;
+  }>('/pointcloud/map');
+}
+
+export function getMappingMode() {
+  return apiGet<{ configured: boolean; enabled: boolean; project_code: string | null }>('/ops/mapping');
+}
+
+export function setMappingMode(enabled: boolean) {
+  return apiPatch<{ ok: boolean; enabled: boolean; project_code: string }>('/ops/mapping', { enabled });
 }
 
 // Estop

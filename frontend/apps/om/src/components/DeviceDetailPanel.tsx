@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Play, RotateCcw, X } from 'lucide-react';
 import { useOmStore } from '../stores/omStore';
-import { ALERT_STATUS_LABELS, DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, HEALTH_STATUS_LABELS, MISSION_STATE_LABELS, formatPosition, formatUserMessage, getHealthColor, getStatusColor } from '@robots/utils';
+import { CameraSensorPanel } from './CameraSensorPanel';
+import { ALERT_STATUS_LABELS, DEVICE_TYPE_LABELS, DEVICE_STATUS_LABELS, HEALTH_KEYS, HEALTH_STATUS_LABELS, MISSION_PHASE_LABELS, MISSION_STATE_LABELS, formatPosition, formatUserMessage, getDeviceDisplayStatus, getHealthColor, getStatusColor } from '@robots/utils';
 import { getDeviceDetail, requestManualCalibration, sendCommand } from '@robots/api-client';
 import type { DeviceDetail } from '@robots/api-client';
 
@@ -25,12 +26,13 @@ export function DeviceDetailPanel() {
   }, [device?.id]);
 
   if (!device) return null;
-  const statusColor = getStatusColor(device.status);
+  const displayStatus = getDeviceDisplayStatus(device.status, device.connection_status);
+  const statusColor = getStatusColor(displayStatus);
   const trajectory = detail?.trajectory || [];
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={() => selectDevice(null)}>
-      <div className="h-full w-96 overflow-y-auto rounded-l-xl border-l border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.95)] p-5" onClick={(event) => event.stopPropagation()}>
+      <div className="h-full w-full max-w-[480px] overflow-y-auto rounded-l-xl border-l border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.95)] p-5" onClick={(event) => event.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-[16px] font-bold text-[#E6F6FF]">设备详情: {device.code}</h3>
           <button onClick={() => selectDevice(null)} className="text-[#79A3BF] hover:text-[#FF5C6D]" title="关闭"><X size={18} /></button>
@@ -40,7 +42,8 @@ export function DeviceDetailPanel() {
           <Row label="编码" value={device.code} mono />
           <Row label="名称" value={device.name} />
            <Row label="类型" value={DEVICE_TYPE_LABELS[device.type] || '未知设备类型'} />
-           <Row label="状态" value={DEVICE_STATUS_LABELS[device.status] || '未知状态'} color={statusColor} />
+           <Row label="连接状态" value={DEVICE_STATUS_LABELS[displayStatus] || '未知状态'} color={statusColor} />
+           {displayStatus === 'offline' && <Row label="最后运行状态" value={DEVICE_STATUS_LABELS[device.status] || '未知状态'} color={getStatusColor(device.status)} />}
           <Row label="标段" value={device.section_id || '-'} />
         </Section>
 
@@ -50,6 +53,7 @@ export function DeviceDetailPanel() {
           <Row label="上报时间" value={device.last_heartbeat ? new Date(device.last_heartbeat).toLocaleString() : '未上报'} />
            {device.operational_metrics?.power_kw !== undefined && <Row label="功率" value={`${device.operational_metrics.power_kw} 千瓦`} />}
            {device.operational_metrics?.energy_kwh_total !== undefined && <Row label="累计能耗" value={`${device.operational_metrics.energy_kwh_total} 千瓦时`} />}
+           {typeof device.operational_metrics?.mission_phase === 'string' && <Row label="当前任务阶段" value={MISSION_PHASE_LABELS[device.operational_metrics.mission_phase] || '未知执行阶段'} color="#2FD7FF" />}
         </Section>
 
         <Section title="体检指标">
@@ -60,6 +64,8 @@ export function DeviceDetailPanel() {
             })}
           </div>
         </Section>
+
+        <CameraSensorPanel deviceId={device.id} />
 
         <Section title={`历史告警 (${detail?.alerts.length ?? 0})`}>
           {loading && <div className="text-[12px] text-[#5A7A92]">读取历史记录...</div>}
@@ -74,7 +80,7 @@ export function DeviceDetailPanel() {
 
         <Section title={`任务执行 (${detail?.executions.length ?? 0})`}>
           {!detail?.executions.length && <div className="text-[12px] text-[#5A7A92]">暂无任务执行记录</div>}
-           {detail?.executions.slice(0, 4).map((execution) => <div key={execution.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{execution.task_code} · {execution.task_name}</div><div className="text-[#5A7A92]">{MISSION_STATE_LABELS[execution.state] || '未知状态'} · {Math.round(execution.progress)}%</div></div>)}
+           {detail?.executions.slice(0, 4).map((execution) => <div key={execution.id} className="border-b border-[rgba(91,183,255,0.1)] py-1 text-[11px]"><div className="text-[#aecce0]">{execution.task_code} · {execution.task_name}</div><div className="text-[#5A7A92]">{MISSION_STATE_LABELS[execution.state] || '未知状态'} · {MISSION_PHASE_LABELS[execution.phase] || '未知执行阶段'} · {Math.round(execution.progress)}%</div></div>)}
         </Section>
 
         <div className="mt-4 flex gap-2">

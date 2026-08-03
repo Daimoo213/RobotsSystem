@@ -21,14 +21,14 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-2 p-3">
-      <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><TopBar /></div><MapEditorPanel /></div>
-      <div className="grid flex-1 grid-cols-[320px_1fr_360px] gap-2 overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden p-3">
+      <div className="flex shrink-0 items-center gap-2"><div className="min-w-0 flex-1"><TopBar /></div><MapEditorPanel /></div>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-hidden xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)_minmax(300px,360px)]">
         <LeftColumn />
         <Scene3D />
         <RightColumn />
       </div>
-      <DeviceDeck />
+      <div className="h-[116px] shrink-0"><DeviceDeck /></div>
       {selectedDeviceId && <DeviceDetailPanel />}
       <EstopOverlay active={estopActive} source={estopSource || undefined} canRecover onRecover={handleRecover} />
     </div>
