@@ -68,17 +68,25 @@ def _region(code: str) -> MapRegion:
     )
 
 
-def _path(code: str, end_z: float = 0.5) -> MapPath:
+def _path(
+    code: str,
+    end_z: float = 0.5,
+    *,
+    start: list[float] | None = None,
+    end: list[float] | None = None,
+    direction: str = "bidirectional",
+    status: str = "active",
+) -> MapPath:
     return MapPath(
         id=uuid.uuid5(uuid.NAMESPACE_DNS, f"path:{code}"),
         code=code,
         name=code,
-        points=[[0.0, 0.0, 0.0], [10.0, 0.0, end_z]],
-        direction="bidirectional",
+        points=[start or [0.0, 0.0, 0.0], end or [10.0, 0.0, end_z]],
+        direction=direction,
         min_width_m=2.5,
         max_slope_percent=10.0,
         device_types=["agv"],
-        status="active",
+        status=status,
     )
 
 
@@ -175,6 +183,67 @@ def test_sync_revision_includes_real_robot_paths() -> None:
     assert map_sync_revision(base) != map_sync_revision(with_path)
     assert map_sync_revision(with_path) != map_sync_revision(changed_path)
     assert _manifest(with_path, _device()).paths[0]["points"][-1] == [10.0, 0.0, 0.5]
+
+
+def test_manifest_exposes_directed_road_edges_and_same_cell_junctions() -> None:
+    first = _path(
+        "PATH-A",
+        start=[0.0, 0.0, 0.0],
+        end=[1.0, 0.0, 0.0],
+        direction="forward",
+    )
+    second = _path(
+        "PATH-B",
+        start=[1.0, 0.0, 0.0],
+        end=[2.0, 0.0, 0.0],
+        direction="reverse",
+    )
+
+    manifest = _manifest(DeviceMapSnapshot(_project(), [], [], [], None, [first, second]), _device())
+    edges = {edge.id: edge for edge in manifest.road_network.edges}
+
+    assert manifest.schema_version == "v2"
+    assert manifest.road_network.voxel_cell_size_m == 0.05
+    assert edges[f"road:{first.id}:forward"].from_node_id == f"road:{first.id}:start"
+    assert edges[f"road:{first.id}:forward"].to_node_id == f"road:{first.id}:end"
+    assert edges[f"road:{second.id}:reverse"].from_node_id == f"road:{second.id}:end"
+    assert edges[f"road:{second.id}:reverse"].to_node_id == f"road:{second.id}:start"
+    junctions = [edge for edge in edges.values() if edge.kind == "junction"]
+    assert {(edge.from_node_id, edge.to_node_id) for edge in junctions} == {
+        (f"road:{first.id}:end", f"road:{second.id}:start"),
+        (f"road:{second.id}:start", f"road:{first.id}:end"),
+    }
+
+
+def test_manifest_connects_face_adjacent_road_endpoints() -> None:
+    first = _path("PATH-A", start=[0.0, 0.0, 0.0], end=[0.05, 0.0, 0.0])
+    second = _path("PATH-B", start=[0.1, 0.0, 0.0], end=[1.0, 0.0, 0.0])
+
+    network = _manifest(DeviceMapSnapshot(_project(), [], [], [], None, [first, second]), _device()).road_network
+    junctions = [edge for edge in network.edges if edge.kind == "junction"]
+
+    assert {(edge.from_node_id, edge.to_node_id) for edge in junctions} == {
+        (f"road:{first.id}:end", f"road:{second.id}:start"),
+        (f"road:{second.id}:start", f"road:{first.id}:end"),
+    }
+
+
+def test_manifest_does_not_connect_diagonally_adjacent_road_endpoints() -> None:
+    first = _path("PATH-A", start=[0.0, 0.0, 0.0], end=[0.05, 0.0, 0.0])
+    second = _path("PATH-B", start=[0.1, 0.05, 0.0], end=[1.0, 1.0, 0.0])
+
+    network = _manifest(DeviceMapSnapshot(_project(), [], [], [], None, [first, second]), _device()).road_network
+
+    assert [edge for edge in network.edges if edge.kind == "junction"] == []
+
+
+def test_disabled_roads_remain_in_records_but_not_in_traversable_network() -> None:
+    disabled = _path("PATH-DISABLED", status="disabled")
+    manifest = _manifest(DeviceMapSnapshot(_project(), [], [], [], None, [disabled]), _device())
+
+    assert [path["code"] for path in manifest.paths] == ["PATH-DISABLED"]
+    assert manifest.road_network.nodes == []
+    assert manifest.road_network.edges == []
 
 
 def test_manifest_exposes_real_semantic_map_without_embedding_point_array() -> None:

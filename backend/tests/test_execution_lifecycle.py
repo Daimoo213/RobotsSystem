@@ -15,8 +15,9 @@ class FakeSession:
         self.execution = execution
         self.task = task
 
-    async def scalar(self, _statement):
-        return self.execution
+    async def scalar(self, statement):
+        entity = statement.column_descriptions[0].get("entity")
+        return self.task if entity.__name__ == "Task" else self.execution
 
     async def get(self, model, _identifier):
         return self.task if model.__name__ == "Task" else None
@@ -30,10 +31,14 @@ class CancellationSession:
         self.task = task
         self._scalar_calls = 0
 
-    async def scalar(self, _statement):
-        self._scalar_calls += 1
-        # Lookup execution, lookup other active executions, lookup resource plan.
-        return self.execution if self._scalar_calls == 1 else None
+    async def scalar(self, statement):
+        entity = statement.column_descriptions[0].get("entity")
+        if entity.__name__ == "MissionExecution":
+            self._scalar_calls += 1
+            return self.execution if self._scalar_calls == 1 else None
+        if entity.__name__ == "Task":
+            return self.task
+        return None
 
     async def get(self, model, _identifier):
         return self.task if model.__name__ == "Task" else None
@@ -51,6 +56,8 @@ class AllocationSession:
 
     async def scalar(self, statement):
         entity = statement.column_descriptions[0].get("entity")
+        if entity.__name__ == "Task":
+            return self.task
         if entity is TaskResourcePlan:
             return self.plan
         return self.execution
@@ -365,6 +372,91 @@ async def test_multi_device_allocation_telemetry_aggregates_before_completing_ta
     assert task.completed_qty == 10.0
     assert task.progress == 100.0
     assert plan.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_multi_device_cancellation_finishes_after_every_allocation_confirms() -> None:
+    device_a = _device()
+    device_b = _device()
+    task = _task(device_a.id)
+    task.status = "cancel_requested"
+    task.dispatch_state = "cancelling"
+    task.dispatch_reason = "waiting_device_cancel"
+    task.params = {"cancellation": {"delivery": "queued"}}
+    requirement_id = uuid.uuid4()
+    requirement = SimpleNamespace(
+        id=requirement_id,
+        role_code="primary",
+        output_unit="t",
+        required_qty=10.0,
+        completed_qty=0.0,
+        is_completion_gate=True,
+    )
+    allocation_a = SimpleNamespace(
+        id=uuid.uuid4(), requirement_id=requirement_id, planned_qty=6.0, completed_qty=0.0, state="cancel_requested"
+    )
+    allocation_b = SimpleNamespace(
+        id=uuid.uuid4(), requirement_id=requirement_id, planned_qty=4.0, completed_qty=0.0, state="cancel_requested"
+    )
+    execution_a = _execution(task, device_a, state="cancel_requested")
+    execution_a.allocation_id = allocation_a.id
+    execution_a.result = {"control_return_state": "running"}
+    execution_b = _execution(task, device_b, state="cancel_requested")
+    execution_b.allocation_id = allocation_b.id
+    execution_b.result = {"control_return_state": "running"}
+    plan = SimpleNamespace(state="executing", reason=None)
+    session = AllocationSession(task, [requirement], [allocation_a, allocation_b], plan)
+
+    session.execution = execution_a
+    await apply_execution_telemetry(
+        session,
+        device_a,
+        execution_id=execution_a.gateway_execution_id,
+        execution_state="cancelled",
+        progress=0.0,
+        completed_qty=0.0,
+        result=None,
+        failure_code=None,
+    )
+
+    assert task.status == "cancel_requested"
+    assert allocation_a.state == "cancelled"
+    assert allocation_b.state == "cancel_requested"
+
+    session.execution = execution_b
+    await apply_execution_telemetry(
+        session,
+        device_b,
+        execution_id=execution_b.gateway_execution_id,
+        execution_state="cancelled",
+        progress=0.0,
+        completed_qty=0.0,
+        result=None,
+        failure_code=None,
+    )
+
+    assert task.status == "cancelled"
+    assert task.dispatch_state == "cancelled"
+    assert allocation_b.state == "cancelled"
+    assert plan.state == "cancelled"
+
+    # A gateway can repeat the same terminal telemetry. It must not make the
+    # already cancelled business task eligible for scheduling again.
+    session.execution = execution_a
+    await apply_execution_telemetry(
+        session,
+        device_a,
+        execution_id=execution_a.gateway_execution_id,
+        execution_state="cancelled",
+        progress=0.0,
+        completed_qty=0.0,
+        result=None,
+        failure_code=None,
+    )
+
+    assert task.status == "cancelled"
+    assert task.dispatch_state == "cancelled"
+    assert plan.state == "cancelled"
 
 
 @pytest.mark.asyncio

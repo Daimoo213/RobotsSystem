@@ -14,6 +14,8 @@ export function DeviceCard({ device, onClick, selected = false }: DeviceCardProp
   const statusColor = getStatusColor(displayStatus);
   const isFault = displayStatus === 'fault';
   const isOffline = displayStatus === 'offline';
+  const isPlannedOffline = displayStatus === 'planned_offline';
+  const isUnavailable = isOffline || isPlannedOffline;
 
   return (
     <button
@@ -23,7 +25,7 @@ export function DeviceCard({ device, onClick, selected = false }: DeviceCardProp
       aria-pressed={selected}
       className={`grid h-full min-h-0 w-[184px] shrink-0 snap-start grid-rows-[18px_22px_minmax(0,1fr)] overflow-hidden rounded-md border px-2 py-1.5 text-left transition-[border-color,box-shadow,background-color] hover:border-[#2FD7FF] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#2FD7FF] motion-reduce:animate-none ${isFault ? 'animate-[blink_1.5s_ease-in-out_infinite]' : ''}`}
       style={{
-        borderColor: selected || isFault || isOffline ? statusColor : 'rgba(91,183,255,0.22)',
+        borderColor: selected || isFault || isUnavailable ? statusColor : 'rgba(91,183,255,0.22)',
         backgroundColor: selected ? 'rgba(12,37,57,0.96)' : 'rgba(9,25,41,0.86)',
         boxShadow: selected ? `inset 3px 0 0 ${statusColor}, 0 0 0 1px ${statusColor}44` : undefined,
       }}
@@ -40,18 +42,18 @@ export function DeviceCard({ device, onClick, selected = false }: DeviceCardProp
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="truncate font-mono text-[13px] font-bold text-[#E6F6FF]">{device.code}</span>
         <span className="shrink-0 text-[10px] text-[#5A7A92]">
-          {isOffline ? '末次电量' : '电量'} {Math.round(device.battery)}%
+          {isUnavailable ? '末次电量' : '电量'} {Math.round(device.battery)}%
         </span>
       </div>
       <div className="grid min-h-0 grid-cols-5 items-center border-t border-[rgba(91,183,255,0.15)] pt-1">
         {HEALTH_KEYS.map(({ key, label }) => {
           const reportedValue = device.health?.[key as keyof typeof device.health] || 'unknown';
-          const value = isOffline ? (key === 'connection' ? 'fail' : 'unknown') : reportedValue;
+          const value = isOffline ? (key === 'connection' ? 'fail' : 'unknown') : isPlannedOffline ? (key === 'connection' ? 'planned_offline' : 'unknown') : reportedValue;
           return (
             <div
               key={key}
               className="grid min-w-0 grid-rows-[13px_14px] place-items-center text-center"
-              title={isOffline && key !== 'connection' ? `${label}：设备离线，当前状态未知` : `${label}：${HEALTH_STATUS_LABELS[value] || '未知'}`}
+              title={isUnavailable && key !== 'connection' ? `${label}：设备当前未连接，状态未知` : `${label}：${HEALTH_STATUS_LABELS[value] || '未知'}`}
             >
               <div className="text-[10px] leading-[13px] text-[#5A7A92]">{label}</div>
               <div className="w-full truncate text-[10px] font-mono leading-[14px]" style={{ color: getHealthColor(value) }}>

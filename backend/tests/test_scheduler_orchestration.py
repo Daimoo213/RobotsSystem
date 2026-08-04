@@ -141,6 +141,15 @@ def test_dag_rebuild_view_unlocks_pending_task_with_completed_dependency() -> No
     assert [node.task_id for node in dag.get_ready_tasks()] == [dependent_id]
 
 
+def test_dag_never_requeues_assigned_or_running_task() -> None:
+    dag = TaskDAG()
+    dag.add_node(DAGNode(task_id="pending", process_id="site_prep", name="待派发", status="pending"))
+    dag.add_node(DAGNode(task_id="assigned", process_id="site_prep", name="已分配", status="assigned"))
+    dag.add_node(DAGNode(task_id="running", process_id="site_prep", name="执行中", status="running"))
+
+    assert [node.task_id for node in dag.get_ready_tasks()] == ["pending"]
+
+
 @pytest.mark.asyncio
 async def test_waiting_task_becomes_dispatchable_when_device_comes_online() -> None:
     device = SimpleNamespace(

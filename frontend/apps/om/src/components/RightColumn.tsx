@@ -52,7 +52,7 @@ export function RightColumn() {
   const topologyNodes = devices.slice(0, 20).map((d, i) => ({
     id: d.id,
     code: d.code,
-    isOnline: d.status !== 'fault' && d.status !== 'maintenance',
+    isOnline: d.connection_status === 'online',
   }));
 
   return (

@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.redis import CHANNEL_EVENTS, CHANNEL_TASKS, redis
 from app.core.security import require
-from app.models.models import Device, MapPoint, MissionExecution, Script, Task, TaskResourceAllocation, TaskResourcePlan, TaskResourceRequirement
+from app.models.models import Device, DeviceCommand, MapPoint, MissionExecution, Script, Task, TaskResourceAllocation, TaskResourcePlan, TaskResourceRequirement
 from app.scheduler.matching import device_is_compatible
 from app.scheduler.resource_planner import plan_task_resources
 from app.scheduler.scheduling import automatic_schedule_window, completed_dependency_anchor
@@ -50,6 +50,28 @@ TASK_RESPONSE_OPTIONS = (
     selectinload(Task.resource_allocations).selectinload(TaskResourceAllocation.device),
     selectinload(Task.resource_allocations).selectinload(TaskResourceAllocation.executions),
 )
+
+
+async def _mission_control_priority(
+    db: AsyncSession,
+    execution: MissionExecution,
+    *,
+    default: int = 90,
+) -> int:
+    """Preserve FIFO order when controlling an execution not yet started."""
+
+    if execution.state != "dispatched":
+        return default
+    start_priority = await db.scalar(
+        select(DeviceCommand.priority)
+        .where(
+            DeviceCommand.mission_execution_id == execution.id,
+            DeviceCommand.command == "mission_start",
+        )
+        .order_by(DeviceCommand.created_at.desc())
+        .limit(1)
+    )
+    return start_priority if start_priority is not None else default
 
 
 async def _load_task_response(db: AsyncSession, task_id: uuid.UUID) -> Task:
@@ -551,7 +573,8 @@ async def reassign_task(
         old_device = await db.get(Device, active_execution.device_id)
         if old_device:
             await queue_command(
-                db, old_device, "mission_cancel", source="operator", priority=90,
+                db, old_device, "mission_cancel", source="operator",
+                priority=await _mission_control_priority(db, active_execution),
                 idempotency_key=f"mission-cancel:{active_execution.id}",
                 payload={"execution_id": active_execution.gateway_execution_id, "reason": "reassign"},
                 mission_execution_id=active_execution.id,
@@ -610,7 +633,10 @@ async def recalculate_resource_plan(
 @router.post(
     "/{task_id}/pause",
     summary="请求暂停施工任务",
-    description="为任务当前执行设备写入暂停命令，并将执行实例标记为等待设备确认；响应不表示设备已暂停。",
+    description=(
+        "为任务当前执行设备写入暂停命令，并将执行实例标记为等待设备确认；"
+        "已下发但尚未启动的任务会让暂停命令排在对应启动命令之后送达，响应不表示设备已暂停。"
+    ),
     response_description="返回命令入队状态和任务当前信息。",
 )
 async def pause_task(task_id: Annotated[uuid.UUID, Path(description="待暂停任务的 UUID。")], db: AsyncSession = Depends(get_db),
@@ -632,15 +658,25 @@ async def pause_task(task_id: Annotated[uuid.UUID, Path(description="待暂停�
             device = await db.get(Device, execution.device_id)
             if device is None:
                 raise HTTPException(status_code=409, detail="task has an execution without a registered device")
-            await queue_command(
-                db, device, "mission_pause", source="operator", priority=90,
+
+            # A dispatched execution already has a mission_start command. Keep the
+            # same priority so FIFO delivery sends start before this control for
+            # the same execution instance.
+            command_priority = await _mission_control_priority(db, execution)
+
+            command = await queue_command(
+                db, device, "mission_pause", source="operator", priority=command_priority,
                 idempotency_key=f"mission-pause:{execution.id}",
                 payload={"execution_id": execution.gateway_execution_id},
                 mission_execution_id=execution.id,
             )
             execution.result = {**(execution.result or {}), "control_return_state": execution.state}
             execution.state = "pause_requested"
-            command_ids.append(str(execution.id))
+            if execution.allocation_id is not None:
+                allocation = await db.get(TaskResourceAllocation, execution.allocation_id)
+                if allocation is not None:
+                    allocation.state = "pause_requested"
+            command_ids.append(str(command.id))
         t.params = {
             **(t.params or {}),
             "pending_controls": {"action": "pause", "execution_ids": [execution.gateway_execution_id for execution in executions]},
@@ -676,7 +712,7 @@ async def resume_task(task_id: Annotated[uuid.UUID, Path(description="待恢复�
             device = await db.get(Device, execution.device_id)
             if device is None:
                 raise HTTPException(status_code=409, detail="task has an execution without a registered device")
-            await queue_command(
+            command = await queue_command(
                 db, device, "mission_resume", source="operator", priority=90,
                 idempotency_key=f"mission-resume:{execution.id}",
                 payload={"execution_id": execution.gateway_execution_id},
@@ -684,7 +720,11 @@ async def resume_task(task_id: Annotated[uuid.UUID, Path(description="待恢复�
             )
             execution.result = {**(execution.result or {}), "control_return_state": execution.state}
             execution.state = "resume_requested"
-            command_ids.append(str(execution.id))
+            if execution.allocation_id is not None:
+                allocation = await db.get(TaskResourceAllocation, execution.allocation_id)
+                if allocation is not None:
+                    allocation.state = "resume_requested"
+            command_ids.append(str(command.id))
         t.params = {
             **(t.params or {}),
             "pending_controls": {"action": "resume", "execution_ids": [execution.gateway_execution_id for execution in executions]},
@@ -700,6 +740,7 @@ async def resume_task(task_id: Annotated[uuid.UUID, Path(description="待恢复�
     summary="安全取消施工任务",
     description=(
         "请求取消任务。平台会向该任务的每个活动执行单元写入幂等 mission_cancel 命令，"
+        "已下发但尚未启动的执行单元会让取消命令排在对应启动命令之后送达；"
         "并保持取消中状态，直到对应设备通过遥测确认停止。没有活动执行单元的待调度任务会立即标记为已取消。"
     ),
     response_description="返回取消命令入队结果和任务当前状态；命令入队不代表设备已经停止。",
@@ -771,7 +812,7 @@ async def cancel_task(
             device,
             "mission_cancel",
             source="operator",
-            priority=90,
+            priority=await _mission_control_priority(db, execution),
             idempotency_key=f"mission-cancel:{execution.id}",
             payload={"execution_id": execution.gateway_execution_id, "reason": "task_cancelled_by_operator"},
             mission_execution_id=execution.id,

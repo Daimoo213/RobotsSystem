@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.api.devices import (
     GatewayCommandAck,
     GatewayCameraTelemetry,
+    GatewayOfflineReport,
     GatewayRegistration,
     GatewayTelemetry,
     _camera_state,
@@ -23,6 +24,7 @@ def test_gateway_routes_are_exposed() -> None:
 
     assert ("/devices/gateway/register", "POST") in routes
     assert ("/devices/gateway/{device_code}/telemetry", "POST") in routes
+    assert ("/devices/gateway/{device_code}/offline", "POST") in routes
     assert ("/devices/gateway/{device_code}/commands", "GET") in routes
     assert ("/devices/gateway/{device_code}/commands/{command_id}/ack", "POST") in routes
     assert ("/devices/{device_id}/camera", "GET") in routes
@@ -173,3 +175,26 @@ def test_connection_status_expires_after_the_heartbeat_window() -> None:
     assert connection_status(now - timedelta(seconds=16), now) == "offline"
     assert connection_status(None, now) == "offline"
     assert connection_health(now - timedelta(seconds=16), now) == "fail"
+    assert connection_status(now - timedelta(hours=1), now, offline_reported_at=now) == "planned_offline"
+    assert connection_health(now - timedelta(hours=1), now, offline_reported_at=now) == "planned_offline"
+
+
+def test_gateway_offline_report_requires_a_consistent_timeline() -> None:
+    report = GatewayOfflineReport.model_validate(
+        {
+            "event_id": "offline-001",
+            "reason_code": "maintenance",
+            "observed_at": "2026-08-04T12:00:00Z",
+            "expected_reconnect_at": "2026-08-04T14:00:00Z",
+        }
+    )
+    assert report.reason_code == "maintenance"
+    with pytest.raises(ValueError, match="expected_reconnect_at"):
+        GatewayOfflineReport.model_validate(
+            {
+                "event_id": "offline-002",
+                "reason_code": "shutdown",
+                "observed_at": "2026-08-04T12:00:00Z",
+                "expected_reconnect_at": "2026-08-04T11:00:00Z",
+            }
+        )

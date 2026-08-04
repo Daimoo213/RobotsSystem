@@ -1,12 +1,12 @@
 /** O&M spatial view with a project-configured three-dimensional voxel grid. */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Component, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { Html, OrbitControls, useGLTF } from '@react-three/drei';
 import { Grid3X3 } from 'lucide-react';
 import * as THREE from 'three';
 import { useOmStore } from '../stores/omStore';
-import { DEFAULT_GRID_CONFIG, type GridCell, useMapEditorStore } from '../stores/mapEditorStore';
+import { DEFAULT_GRID_CONFIG, getDisplayGridConfig, type GridCell, useMapEditorStore } from '../stores/mapEditorStore';
 import { createRegionSelectionUnion } from '../utils/voxelSelection';
 import { COLORS, COMMAND_LABELS, FILTER_CHIPS, getDeviceDisplayStatus } from '@robots/utils';
 import { getSceneConfig, sendBatchCommand, triggerEstop } from '@robots/api-client';
@@ -14,6 +14,7 @@ import type { Device, GridMapConfig, MapAsset, MapPath, MapPoint, MapRegion, Map
 
 const DEFAULT_MAP_COLOR = '#2FD7FF';
 const EPSILON = 0.0001;
+const MAX_GRID_DISPLAY_SEGMENTS = 50_000;
 
 interface Projection {
   centerX: number;
@@ -36,6 +37,12 @@ interface GridVolume {
 interface Segment {
   start: THREE.Vector3;
   end: THREE.Vector3;
+}
+
+interface PathGridCell {
+  column: number;
+  row: number;
+  layer: number;
 }
 
 function project(point: { x: number; y: number; z?: number }, projection: Projection): [number, number, number] {
@@ -80,20 +87,49 @@ function calculateProjection(regions: MapRegion[], points: MapPoint[], paths: Ma
   return { centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2, scale: 24 / span };
 }
 
-function getGridVolume(config: GridMapConfig): GridVolume {
-  const columns = Math.ceil(config.extent_length / config.cell_length);
-  const rows = Math.ceil(config.extent_width / config.cell_width);
+function getGridVolume(config: GridMapConfig, baseConfig: GridMapConfig = config): GridVolume {
+  const columns = Math.ceil(baseConfig.extent_length / config.cell_length);
+  const rows = Math.ceil(baseConfig.extent_width / config.cell_width);
+  const layers = Math.ceil((baseConfig.vertical_layers * baseConfig.cell_height) / config.cell_height);
   return {
-    minX: config.origin_x,
-    minY: config.origin_y,
-    minZ: config.origin_z,
-    maxX: config.origin_x + columns * config.cell_length,
-    maxY: config.origin_y + rows * config.cell_width,
-    maxZ: config.origin_z + config.vertical_layers * config.cell_height,
+    minX: baseConfig.origin_x,
+    minY: baseConfig.origin_y,
+    minZ: baseConfig.origin_z,
+    maxX: baseConfig.origin_x + baseConfig.extent_length,
+    maxY: baseConfig.origin_y + baseConfig.extent_width,
+    maxZ: baseConfig.origin_z + baseConfig.vertical_layers * baseConfig.cell_height,
     columns,
     rows,
-    layers: config.vertical_layers,
+    layers,
   };
+}
+
+function gridSegmentCount(columns: number, rows: number, layers: number, stepCells: number): number {
+  const displayedColumns = Math.ceil(columns / stepCells);
+  const displayedRows = Math.ceil(rows / stepCells);
+  return (displayedColumns + 1) * (displayedRows + 1) + (displayedColumns + displayedRows + 2) * (layers + 1);
+}
+
+function getGridDisplayStep(columns: number, rows: number, layers: number): number {
+  let lower = 1;
+  let upper = Math.max(columns, rows);
+  while (lower < upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    if (gridSegmentCount(columns, rows, layers, middle) <= MAX_GRID_DISPLAY_SEGMENTS) upper = middle;
+    else lower = middle + 1;
+  }
+  return lower;
+}
+
+function gridLineIndexes(count: number, stepCells: number): number[] {
+  const indexes: number[] = [];
+  for (let index = 0; index <= count; index += stepCells) indexes.push(index);
+  if (indexes[indexes.length - 1] !== count) indexes.push(count);
+  return indexes;
+}
+
+function gridCoordinate(minimum: number, maximum: number, index: number, cellSize: number, count: number): number {
+  return index >= count ? maximum : Math.min(maximum, minimum + index * cellSize);
 }
 
 function snapGridCell(point: THREE.Vector3, projection: Projection, config: GridMapConfig, volume: GridVolume, editLayer: number): GridCell {
@@ -102,12 +138,12 @@ function snapGridCell(point: THREE.Vector3, projection: Projection, config: Grid
   const column = Math.max(0, Math.min(volume.columns - 1, Math.floor((rawX - volume.minX) / config.cell_length)));
   const row = Math.max(0, Math.min(volume.rows - 1, Math.floor((rawY - volume.minY) / config.cell_width)));
   return {
-    x: volume.minX + column * config.cell_length,
-    y: volume.minY + row * config.cell_width,
-    z: volume.minZ + editLayer * config.cell_height,
-    sizeX: config.cell_length,
-    sizeY: config.cell_width,
-    sizeZ: config.cell_height,
+    x: gridCoordinate(volume.minX, volume.maxX, column, config.cell_length, volume.columns),
+    y: gridCoordinate(volume.minY, volume.maxY, row, config.cell_width, volume.rows),
+    z: gridCoordinate(volume.minZ, volume.maxZ, editLayer, config.cell_height, volume.layers),
+    sizeX: Math.min(config.cell_length, volume.maxX - (volume.minX + column * config.cell_length)),
+    sizeY: Math.min(config.cell_width, volume.maxY - (volume.minY + row * config.cell_width)),
+    sizeZ: Math.min(config.cell_height, volume.maxZ - (volume.minZ + editLayer * config.cell_height)),
   };
 }
 
@@ -138,21 +174,24 @@ function VoxelGrid({ config, projection, volume }: { config: GridMapConfig; proj
   const segments = useMemo<Segment[]>(() => {
     const gridSegments: Segment[] = [];
     const point = (x: number, y: number, z: number) => new THREE.Vector3(...project({ x, y, z }, projection));
-    for (let column = 0; column <= volume.columns; column += 1) {
-      const x = volume.minX + column * config.cell_length;
-      for (let row = 0; row <= volume.rows; row += 1) {
-        const y = volume.minY + row * config.cell_width;
+    const displayStep = getGridDisplayStep(volume.columns, volume.rows, volume.layers);
+    const columns = gridLineIndexes(volume.columns, displayStep);
+    const rows = gridLineIndexes(volume.rows, displayStep);
+    for (const column of columns) {
+      const x = gridCoordinate(volume.minX, volume.maxX, column, config.cell_length, volume.columns);
+      for (const row of rows) {
+        const y = gridCoordinate(volume.minY, volume.maxY, row, config.cell_width, volume.rows);
         gridSegments.push({ start: point(x, y, volume.minZ), end: point(x, y, volume.maxZ) });
       }
     }
     for (let layer = 0; layer <= volume.layers; layer += 1) {
-      const z = volume.minZ + layer * config.cell_height;
-      for (let column = 0; column <= volume.columns; column += 1) {
-        const x = volume.minX + column * config.cell_length;
+      const z = gridCoordinate(volume.minZ, volume.maxZ, layer, config.cell_height, volume.layers);
+      for (const column of columns) {
+        const x = gridCoordinate(volume.minX, volume.maxX, column, config.cell_length, volume.columns);
         gridSegments.push({ start: point(x, volume.minY, z), end: point(x, volume.maxY, z) });
       }
-      for (let row = 0; row <= volume.rows; row += 1) {
-        const y = volume.minY + row * config.cell_width;
+      for (const row of rows) {
+        const y = gridCoordinate(volume.minY, volume.maxY, row, config.cell_width, volume.rows);
         gridSegments.push({ start: point(volume.minX, y, z), end: point(volume.maxX, y, z) });
       }
     }
@@ -348,14 +387,14 @@ function RegionVolume({ region, projection, selected, editorOpen, onSelect }: { 
 
 function DeviceMarker({ device, projection, onClick }: { device: Device; projection: Projection; onClick: () => void }) {
   const displayStatus = getDeviceDisplayStatus(device.status, device.connection_status);
-  const unavailable = displayStatus === 'offline';
+  const unavailable = displayStatus === 'offline' || displayStatus === 'planned_offline';
   const fault = device.status === 'fault' || device.status === 'maintenance';
   const color = unavailable ? COLORS.gray : fault ? COLORS.red : device.status === 'working' ? COLORS.green : device.status === 'moving' ? COLORS.cyan : COLORS.gray;
   const [x, y, z] = project(device.position, projection);
   return (
     <group position={[x, y + 0.4, z]} onClick={onClick}>
       <mesh><sphereGeometry args={[0.28, 12, 12]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={unavailable ? 0.1 : fault ? 0.8 : 0.35} transparent={unavailable} opacity={unavailable ? 0.45 : 1} /></mesh>
-      <Html position={[0, 0.8, 0]} center distanceFactor={14} style={{ pointerEvents: 'none' }}><div className="whitespace-nowrap border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.85)] px-1 text-[9px] text-[#E6F6FF]">{device.code}{unavailable ? ' · 离线' : ''}</div></Html>
+      <Html position={[0, 0.8, 0]} center distanceFactor={14} style={{ pointerEvents: 'none' }}><div className="whitespace-nowrap border border-[rgba(91,183,255,0.3)] bg-[rgba(9,25,41,0.85)] px-1 text-[9px] text-[#E6F6FF]">{device.code}{displayStatus === 'planned_offline' ? ' · 主动离线' : unavailable ? ' · 离线' : ''}</div></Html>
     </group>
   );
 }
@@ -395,54 +434,138 @@ function MapPointMarker({ point, config, projection, selected, editorOpen, onSel
   return <group><VoxelHighlight volume={cellVolume} projection={projection} color={color} opacity={selected ? 0.24 : 0.07} /><group position={[x, y + 0.12, z]} onClick={editorOpen ? (event) => { event.stopPropagation(); onSelect(); } : undefined}><mesh><coneGeometry args={[0.12, 0.38, 4]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={selected ? 0.65 : 0.3} /></mesh><Html position={[0, 0.45, 0]} center distanceFactor={14} style={{ pointerEvents: 'none' }}><div className="whitespace-nowrap border px-1.5 py-0.5 text-[9px]" style={{ borderColor: color, color, backgroundColor: 'rgba(5,11,19,0.86)' }}>{point.name}</div></Html></group></group>;
 }
 
-function MapPathRoute({ path, projection, selected, editorOpen, onSelect, draft = false }: { path: MapPath; projection: Projection; selected: boolean; editorOpen: boolean; onSelect?: () => void; draft?: boolean }) {
-  const { corridor, edges, centerLine, labelPosition } = useMemo(() => {
+function pathGridCellKey(cell: PathGridCell): string {
+  return `${cell.column}:${cell.row}:${cell.layer}`;
+}
+
+function pathPointToGridCell(point: [number, number, number], config: GridMapConfig): PathGridCell {
+  return {
+    column: Math.floor((point[0] - config.origin_x + EPSILON) / config.cell_length),
+    row: Math.floor((point[1] - config.origin_y + EPSILON) / config.cell_width),
+    layer: Math.floor((point[2] - config.origin_z + EPSILON) / config.cell_height),
+  };
+}
+
+function rasterizePathGridCells(path: MapPath, config: GridMapConfig): PathGridCell[] {
+  const routeCells = new Map<string, PathGridCell>();
+  const addPoint = (point: [number, number, number]) => {
+    const cell = pathPointToGridCell(point, config);
+    routeCells.set(pathGridCellKey(cell), cell);
+  };
+
+  for (let index = 0; index < path.points.length - 1; index += 1) {
+    const start = path.points[index];
+    const end = path.points[index + 1];
+    const steps = Math.max(1, Math.ceil(Math.max(
+      Math.abs(end[0] - start[0]) / config.cell_length,
+      Math.abs(end[1] - start[1]) / config.cell_width,
+    )));
+    for (let step = 0; step <= steps; step += 1) {
+      const progress = step / steps;
+      addPoint([
+        start[0] + (end[0] - start[0]) * progress,
+        start[1] + (end[1] - start[1]) * progress,
+        start[2] + (end[2] - start[2]) * progress,
+      ]);
+    }
+  }
+
+  const widthCells = Math.max(1, Math.ceil(path.min_width_m / Math.min(config.cell_length, config.cell_width)));
+  const radiusCells = Math.ceil((widthCells - 1) / 2);
+  const corridorCells = new Map<string, PathGridCell>();
+  for (const cell of routeCells.values()) {
+    for (let rowOffset = -radiusCells; rowOffset <= radiusCells; rowOffset += 1) {
+      for (let columnOffset = -radiusCells; columnOffset <= radiusCells; columnOffset += 1) {
+        const expanded = { column: cell.column + columnOffset, row: cell.row + rowOffset, layer: cell.layer };
+        corridorCells.set(pathGridCellKey(expanded), expanded);
+      }
+    }
+  }
+  return [...corridorCells.values()];
+}
+
+function MapPathRoute({ path, config, projection, selected, editorOpen, onSelect, draft = false }: { path: MapPath; config: GridMapConfig; projection: Projection; selected: boolean; editorOpen: boolean; onSelect?: () => void; draft?: boolean }) {
+  const { corridor, edges, centerLine, labelPosition, hasCorridor } = useMemo(() => {
     const worldPoints = path.points.map(([x, y, z]) => new THREE.Vector3(...project({ x, y, z }, projection)));
     const corridorGeometry = new THREE.BufferGeometry();
+    const edgeGeometry = new THREE.BufferGeometry();
     const centerLineGeometry = new THREE.BufferGeometry();
+    const surfaceOffset = Math.min(config.cell_height * projection.scale * 0.04, 0.02);
     const linePositions = worldPoints.slice(0, -1).flatMap((point, index) => [
-      point.x, point.y + 0.02, point.z,
-      worldPoints[index + 1].x, worldPoints[index + 1].y + 0.02, worldPoints[index + 1].z,
+      point.x, point.y + surfaceOffset, point.z,
+      worldPoints[index + 1].x, worldPoints[index + 1].y + surfaceOffset, worldPoints[index + 1].z,
     ]);
-    centerLineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
-    if (worldPoints.length < 2) return { corridor: corridorGeometry, edges: new THREE.EdgesGeometry(corridorGeometry), centerLine: centerLineGeometry, labelPosition: worldPoints[0] || new THREE.Vector3() };
+    if (linePositions.length > 0) centerLineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+    if (worldPoints.length < 2) return { corridor: corridorGeometry, edges: null, centerLine: centerLineGeometry, labelPosition: worldPoints[0] || new THREE.Vector3(), hasCorridor: false };
 
-    const left: THREE.Vector3[] = [];
-    const right: THREE.Vector3[] = [];
-    const halfWidth = Math.max(path.min_width_m * projection.scale / 2, 0.03);
-    for (let index = 0; index < worldPoints.length; index += 1) {
-      const previous = worldPoints[Math.max(0, index - 1)];
-      const next = worldPoints[Math.min(worldPoints.length - 1, index + 1)];
-      const tangent = next.clone().sub(previous);
-      tangent.y = 0;
-      if (tangent.lengthSq() < EPSILON) tangent.set(1, 0, 0);
-      tangent.normalize();
-      const perpendicular = new THREE.Vector3(-tangent.z, 0, tangent.x).multiplyScalar(halfWidth);
-      left.push(worldPoints[index].clone().add(perpendicular));
-      right.push(worldPoints[index].clone().sub(perpendicular));
-    }
+    const cells = rasterizePathGridCells(path, config);
+    const occupied = new Set(cells.map(pathGridCellKey));
     const positions: number[] = [];
-    for (let index = 0; index < worldPoints.length - 1; index += 1) {
-      const a = left[index]; const b = right[index]; const c = right[index + 1]; const d = left[index + 1];
-      positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+    const edgePositions: number[] = [];
+    const appendVertex = (target: number[], x: number, y: number, z: number) => target.push(...project({ x, y, z }, projection));
+    const appendEdge = (start: [number, number], end: [number, number], z: number) => {
+      appendVertex(edgePositions, start[0], start[1], z);
+      appendVertex(edgePositions, end[0], end[1], z);
+    };
+    const neighbors: Array<{ column: number; row: number; edge: (x0: number, x1: number, y0: number, y1: number) => [[number, number], [number, number]] }> = [
+      { column: -1, row: 0, edge: (x0, _x1, y0, y1) => [[x0, y0], [x0, y1]] },
+      { column: 1, row: 0, edge: (_x0, x1, y0, y1) => [[x1, y1], [x1, y0]] },
+      { column: 0, row: -1, edge: (x0, x1, y0, _y1) => [[x1, y0], [x0, y0]] },
+      { column: 0, row: 1, edge: (x0, x1, _y0, y1) => [[x0, y1], [x1, y1]] },
+    ];
+
+    for (const cell of cells) {
+      const x0 = config.origin_x + cell.column * config.cell_length;
+      const x1 = x0 + config.cell_length;
+      const y0 = config.origin_y + cell.row * config.cell_width;
+      const y1 = y0 + config.cell_width;
+      const z = config.origin_z + cell.layer * config.cell_height + surfaceOffset / projection.scale;
+      appendVertex(positions, x0, y0, z); appendVertex(positions, x1, y0, z); appendVertex(positions, x1, y1, z);
+      appendVertex(positions, x0, y0, z); appendVertex(positions, x1, y1, z); appendVertex(positions, x0, y1, z);
+      for (const neighbor of neighbors) {
+        if (!occupied.has(pathGridCellKey({ column: cell.column + neighbor.column, row: cell.row + neighbor.row, layer: cell.layer }))) {
+          const [start, end] = neighbor.edge(x0, x1, y0, y1);
+          appendEdge(start, end, z);
+        }
+      }
     }
     corridorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    if (edgePositions.length > 0) edgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
     return {
       corridor: corridorGeometry,
-      edges: new THREE.EdgesGeometry(corridorGeometry),
+      edges: edgePositions.length > 0 ? edgeGeometry : null,
       centerLine: centerLineGeometry,
       labelPosition: worldPoints[Math.floor(worldPoints.length / 2)],
+      hasCorridor: positions.length > 0,
     };
-  }, [path, projection]);
+  }, [config, path, projection]);
   const color = draft ? DEFAULT_MAP_COLOR : path.status === 'active' ? (selected ? COLORS.amber : COLORS.green) : COLORS.gray;
 
   useEffect(() => () => {
     corridor.dispose();
-    edges.dispose();
+    edges?.dispose();
     centerLine.dispose();
   }, [centerLine, corridor, edges]);
 
-  return <group><mesh geometry={corridor} onClick={editorOpen && onSelect ? (event) => { event.stopPropagation(); onSelect(); } : undefined}><meshBasicMaterial color={color} transparent opacity={draft ? 0.18 : selected ? 0.32 : 0.18} side={THREE.DoubleSide} depthWrite={false} /></mesh><lineSegments geometry={edges}><lineBasicMaterial color={color} transparent opacity={draft ? 0.9 : selected ? 1 : 0.78} /></lineSegments><lineSegments geometry={centerLine}><lineBasicMaterial color={color} transparent opacity={0.98} /></lineSegments>{editorOpen && !draft && <Html position={[labelPosition.x, labelPosition.y + 0.18, labelPosition.z]} center distanceFactor={14} style={{ pointerEvents: 'none' }}><div className="whitespace-nowrap border px-1.5 py-0.5 text-[9px]" style={{ borderColor: color, color, backgroundColor: 'rgba(5,11,19,0.86)' }}>{path.name}</div></Html>}</group>;
+  if (path.points.length === 0) return null;
+  const handleClick = editorOpen && onSelect ? (event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); onSelect(); } : undefined;
+  return <group><>{hasCorridor && <mesh geometry={corridor} onClick={handleClick}><meshBasicMaterial color={color} transparent opacity={draft ? 0.18 : selected ? 0.32 : 0.18} side={THREE.DoubleSide} depthWrite={false} /></mesh>}{edges && <lineSegments geometry={edges}><lineBasicMaterial color={color} transparent opacity={draft ? 0.9 : selected ? 1 : 0.78} /></lineSegments>}{hasCorridor && <lineSegments geometry={centerLine}><lineBasicMaterial color={color} transparent opacity={0.98} /></lineSegments>}{!hasCorridor && <mesh position={[labelPosition.x, labelPosition.y, labelPosition.z]} onClick={handleClick}><sphereGeometry args={[Math.max(path.min_width_m * projection.scale / 4, 0.06), 8, 8]} /><meshBasicMaterial color={color} transparent opacity={draft ? 0.55 : selected ? 0.8 : 0.6} /></mesh>}</>{editorOpen && !draft && <Html position={[labelPosition.x, labelPosition.y + 0.18, labelPosition.z]} center distanceFactor={14} style={{ pointerEvents: 'none' }}><div className="whitespace-nowrap border px-1.5 py-0.5 text-[9px]" style={{ borderColor: color, color, backgroundColor: 'rgba(5,11,19,0.86)' }}>{path.name}</div></Html>}</group>;
+}
+
+class MapPathRouteBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown): void {
+    if (import.meta.env.DEV) console.error('地图路径渲染失败，已跳过异常路径。', error);
+  }
+
+  render(): ReactNode {
+    return this.state.hasError ? null : this.props.children;
+  }
 }
 
 function VoxelGridSelector({ mode, config, volume, projection, editLayer, regionHeightCells }: { mode: 'point' | 'region' | 'path'; config: GridMapConfig; volume: GridVolume; projection: Projection; editLayer: number; regionHeightCells: number }) {
@@ -471,12 +594,22 @@ function VoxelGridSelector({ mode, config, volume, projection, editLayer, region
     dragging.current = true;
     startCell.current = cell;
     selectionHeightCells.current = regionHeightCells;
-    appendRegionSelection({ start: cell, end: cell, heightCells: selectionHeightCells.current });
+    appendRegionSelection({
+      start: cell,
+      end: cell,
+      heightCells: selectionHeightCells.current,
+      maxZ: Math.min(volume.maxZ, cell.z + selectionHeightCells.current * config.cell_height),
+    });
   };
   const handlePointerMove = (event: { point: THREE.Vector3; stopPropagation: () => void }) => {
     if (!dragging.current || !startCell.current) return;
     event.stopPropagation();
-    updateLastRegionSelection({ start: startCell.current, end: cellAtPointer(event.point), heightCells: selectionHeightCells.current });
+    updateLastRegionSelection({
+      start: startCell.current,
+      end: cellAtPointer(event.point),
+      heightCells: selectionHeightCells.current,
+      maxZ: Math.min(volume.maxZ, startCell.current.z + selectionHeightCells.current * config.cell_height),
+    });
   };
   const handlePointerUp = () => {
     dragging.current = false;
@@ -508,7 +641,7 @@ function MapMesh({ asset, projection }: { asset: MapAsset; projection: Projectio
 
 export function Scene3D() {
   const { devices, energyView, filterStatuses, pointcloud, safetyView, selectDevice, currentView } = useOmStore();
-  const { isOpen: editorOpen, mode, pointCell, regionSelections, pathCells, selectedEntity, selectEntity, gridConfig, setGridConfig, editLayer, regionHeightCells, gridVisible, setGridVisible } = useMapEditorStore();
+  const { isOpen: editorOpen, mode, pointCell, regionSelections, roadSegments, pendingRoadStart, editingPathId, pathCells, pathPreviewWidthM, selectedEntity, selectEntity, gridConfig, setGridConfig, editLayer, regionHeightCells, gridVisible, setGridVisible } = useMapEditorStore();
   const [regions, setRegions] = useState<MapRegion[]>([]);
   const [points, setPoints] = useState<MapPoint[]>([]);
   const [paths, setPaths] = useState<MapPath[]>([]);
@@ -531,15 +664,16 @@ export function Scene3D() {
   }, [setGridConfig]);
 
   const filteredDevices = useMemo(() => devices.filter((device) => !filterStatuses.size || filterStatuses.has(getDeviceDisplayStatus(device.status, device.connection_status))), [devices, filterStatuses]);
-  const gridVolume = useMemo(() => getGridVolume(gridConfig), [gridConfig]);
+  const displayGridConfig = useMemo(() => getDisplayGridConfig(gridConfig), [gridConfig]);
+  const gridVolume = useMemo(() => getGridVolume(displayGridConfig, gridConfig), [displayGridConfig, gridConfig]);
   const projection = useMemo(() => calculateProjection(regions, points, paths, devices, pointcloud, gridVolume), [regions, points, paths, devices, pointcloud, gridVolume]);
   const hasPointcloud = Boolean(pointcloud?.points.length);
   const meshAssets = useMemo(() => assets.filter((asset) => isRenderableMeshAsset(asset, frameId)), [assets, frameId]);
   const activeLayerVolume = useMemo<GridVolume>(() => ({
-    minX: gridVolume.minX, minY: gridVolume.minY, minZ: gridVolume.minZ + editLayer * gridConfig.cell_height,
-    maxX: gridVolume.maxX, maxY: gridVolume.maxY, maxZ: gridVolume.minZ + (editLayer + 1) * gridConfig.cell_height,
+    minX: gridVolume.minX, minY: gridVolume.minY, minZ: gridVolume.minZ + editLayer * displayGridConfig.cell_height,
+    maxX: gridVolume.maxX, maxY: gridVolume.maxY, maxZ: Math.min(gridVolume.maxZ, gridVolume.minZ + (editLayer + 1) * displayGridConfig.cell_height),
     columns: gridVolume.columns, rows: gridVolume.rows, layers: 1,
-  }), [editLayer, gridConfig.cell_height, gridVolume]);
+  }), [displayGridConfig.cell_height, editLayer, gridVolume]);
   const pointSelectionVolume = pointCell ? {
     minX: pointCell.x, minY: pointCell.y, minZ: pointCell.z,
     maxX: pointCell.x + pointCell.sizeX, maxY: pointCell.y + pointCell.sizeY, maxZ: pointCell.z + pointCell.sizeZ,
@@ -549,12 +683,35 @@ export function Scene3D() {
     () => createRegionSelectionUnion(regionSelections).volumes.map(mapRegionVolumeToGridVolume),
     [regionSelections],
   );
-  const pathDraft = useMemo<MapPath | null>(() => pathCells.length ? {
-    id: 'draft', code: 'DRAFT', name: '路径草稿',
-    points: pathCells.map((cell) => [cell.x + cell.sizeX / 2, cell.y + cell.sizeY / 2, cell.z]),
-    direction: 'bidirectional', min_width_m: Math.max(gridConfig.cell_length, gridConfig.cell_width),
+  const pathDrafts = useMemo<MapPath[]>(() => {
+    const toPoint = (cell: GridCell): [number, number, number] => [
+      cell.x + cell.sizeX / 2,
+      cell.y + cell.sizeY / 2,
+      cell.z,
+    ];
+    if (editingPathId) {
+      return pathCells.length ? [{
+        id: 'road-replacement-draft', code: 'ROAD-REPLACEMENT-DRAFT', name: '道路端点草稿',
+        points: pathCells.map(toPoint), direction: 'bidirectional', min_width_m: pathPreviewWidthM,
+        max_slope_percent: 100, device_types: [], status: 'active',
+      }] : [];
+    }
+    return roadSegments.map((segment, index) => ({
+      id: `road-segment-draft-${index}`, code: `ROAD-SEGMENT-DRAFT-${index}`, name: `道路草稿 ${index + 1}`,
+      points: segment.map(toPoint), direction: 'bidirectional', min_width_m: pathPreviewWidthM,
+      max_slope_percent: 100, device_types: [], status: 'active',
+    }));
+  }, [editingPathId, pathCells, pathPreviewWidthM, roadSegments]);
+  const pendingRoadDraft = useMemo<MapPath | null>(() => pendingRoadStart && !editingPathId ? {
+    id: 'road-start-draft', code: 'ROAD-START-DRAFT', name: '道路起点',
+    points: [[
+      pendingRoadStart.x + pendingRoadStart.sizeX / 2,
+      pendingRoadStart.y + pendingRoadStart.sizeY / 2,
+      pendingRoadStart.z,
+    ]],
+    direction: 'bidirectional', min_width_m: pathPreviewWidthM,
     max_slope_percent: 100, device_types: [], status: 'active',
-  } : null, [gridConfig.cell_length, gridConfig.cell_width, pathCells]);
+  } : null, [editingPathId, pathPreviewWidthM, pendingRoadStart]);
   const editingGeometry = editorOpen && mode !== 'select';
   const navigationMouseButtons = useMemo(() => ({ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }), []);
   const editMouseButtons = useMemo(() => ({ LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }), []);
@@ -593,17 +750,18 @@ export function Scene3D() {
           <ambientLight intensity={0.4} />
           <directionalLight position={[10, 20, 10]} intensity={0.6} />
           <OrbitControls enablePan enableZoom enableRotate mouseButtons={editingGeometry ? editMouseButtons : navigationMouseButtons} />
-          {gridVisible && <VoxelGrid config={gridConfig} projection={projection} volume={gridVolume} />}
+          {gridVisible && <VoxelGrid config={displayGridConfig} projection={projection} volume={gridVolume} />}
           {editorOpen && <VoxelHighlight volume={activeLayerVolume} projection={projection} color="#E6F6FF" opacity={0.025} />}
           {meshAssets.map((asset) => <MapMesh key={asset.id} asset={asset} projection={projection} />)}
           {hasPointcloud ? <PointCloud pointcloud={pointcloud!} projection={projection} /> : <Html center position={[0, 2, 0]}><div className="whitespace-nowrap text-[12px] text-[#79A3BF]">等待外部建图网关上传完整点云地图</div></Html>}
           {regions.map((region) => <RegionVolume key={region.id} region={region} projection={projection} selected={selectedEntity?.kind === 'region' && selectedEntity.id === region.id} editorOpen={editorOpen} onSelect={() => selectEntity({ kind: 'region', id: region.id })} />)}
           {points.map((point) => <MapPointMarker key={point.id} point={point} config={gridConfig} projection={projection} selected={selectedEntity?.kind === 'point' && selectedEntity.id === point.id} editorOpen={editorOpen} onSelect={() => selectEntity({ kind: 'point', id: point.id })} />)}
-          {paths.map((path) => <MapPathRoute key={path.id} path={path} projection={projection} selected={selectedEntity?.kind === 'path' && selectedEntity.id === path.id} editorOpen={editorOpen} onSelect={() => selectEntity({ kind: 'path', id: path.id })} />)}
+          {paths.map((path) => <MapPathRouteBoundary key={path.id}><MapPathRoute path={path} config={gridConfig} projection={projection} selected={selectedEntity?.kind === 'path' && selectedEntity.id === path.id} editorOpen={editorOpen} onSelect={() => selectEntity({ kind: 'path', id: path.id })} /></MapPathRouteBoundary>)}
           {editorOpen && mode === 'point' && pointSelectionVolume && <VoxelHighlight volume={pointSelectionVolume} projection={projection} color="#E6F6FF" opacity={0.16} />}
           {editorOpen && mode === 'region' && <VoxelUnionHighlight volumes={regionSelectionVolumes} projection={projection} color={DEFAULT_MAP_COLOR} opacity={0.13} />}
-          {editorOpen && mode === 'path' && pathDraft && <MapPathRoute path={pathDraft} projection={projection} selected={false} editorOpen={false} draft />}
-          {editorOpen && mode !== 'select' && <VoxelGridSelector mode={mode} config={gridConfig} volume={gridVolume} projection={projection} editLayer={editLayer} regionHeightCells={regionHeightCells} />}
+          {editorOpen && mode === 'path' && pathDrafts.map((path) => <MapPathRouteBoundary key={path.id}><MapPathRoute path={path} config={gridConfig} projection={projection} selected={false} editorOpen={false} draft /></MapPathRouteBoundary>)}
+          {editorOpen && mode === 'path' && pendingRoadDraft && <MapPathRouteBoundary><MapPathRoute path={pendingRoadDraft} config={gridConfig} projection={projection} selected={false} editorOpen={false} draft /></MapPathRouteBoundary>}
+          {editorOpen && mode !== 'select' && <VoxelGridSelector mode={mode} config={displayGridConfig} volume={gridVolume} projection={projection} editLayer={editLayer} regionHeightCells={regionHeightCells} />}
           {filteredDevices.map((device) => <DeviceMarker key={device.id} device={device} projection={projection} onClick={() => { if (!editorOpen) selectDevice(device.id); }} />)}
         </Canvas>
       </div>

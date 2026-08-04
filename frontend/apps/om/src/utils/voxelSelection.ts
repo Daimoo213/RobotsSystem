@@ -1,4 +1,5 @@
 import type { MapRegionVolume } from '@robots/shared-types';
+import { VOXEL_CELL_SIZE_M } from '@robots/shared-types';
 import type { RegionGridSelection } from '../stores/mapEditorStore';
 
 const GRID_INDEX_SCALE = 1_000_000;
@@ -37,8 +38,15 @@ interface Cuboid extends Rectangle {
   maxZIndex: number;
 }
 
+interface AxisCell {
+  coordinate: number;
+  size: number;
+  index: number;
+}
+
 export interface RegionSelectionUnion {
-  voxelCount: number;
+  displayVoxelCount: number;
+  baseVoxelCount: number;
   volumes: MapRegionVolume[];
 }
 
@@ -65,25 +73,48 @@ function voxelKey(cell: VoxelCell): string {
   ].join(':');
 }
 
+function selectedAxisCells(firstCoordinate: number, firstSize: number, secondCoordinate: number, secondSize: number): AxisCell[] {
+  const minimum = Math.min(firstCoordinate, secondCoordinate);
+  const maximum = Math.max(firstCoordinate + firstSize, secondCoordinate + secondSize);
+  const normalSize = Math.max(firstSize, secondSize);
+  const cells: AxisCell[] = [];
+
+  for (
+    let coordinate = minimum, index = gridIndex(minimum, normalSize);
+    coordinate < maximum - 1e-9;
+    coordinate = normalize(coordinate + normalSize), index += GRID_INDEX_SCALE
+  ) {
+    cells.push({
+      coordinate,
+      size: normalize(Math.min(normalSize, maximum - coordinate)),
+      index,
+    });
+  }
+  return cells;
+}
+
 function addSelectionVoxels(selection: RegionGridSelection, voxels: Map<string, VoxelCell>): void {
   const { start, end } = selection;
-  const minX = Math.min(start.x, end.x);
-  const maxX = Math.max(start.x, end.x);
-  const minY = Math.min(start.y, end.y);
-  const maxY = Math.max(start.y, end.y);
-  const minXIndex = gridIndex(minX, start.sizeX);
-  const maxXIndex = gridIndex(maxX, start.sizeX);
-  const minYIndex = gridIndex(minY, start.sizeY);
-  const maxYIndex = gridIndex(maxY, start.sizeY);
+  const xCells = selectedAxisCells(start.x, start.sizeX, end.x, end.sizeX);
+  const yCells = selectedAxisCells(start.y, start.sizeY, end.y, end.sizeY);
   const minZIndex = gridIndex(start.z, start.sizeZ);
+  const selectionMaxZ = normalize(selection.maxZ ?? (start.z + selection.heightCells * start.sizeZ));
 
-  for (let zIndex = minZIndex; zIndex < minZIndex + selection.heightCells * GRID_INDEX_SCALE; zIndex += GRID_INDEX_SCALE) {
-    const z = normalize(start.z + ((zIndex - minZIndex) / GRID_INDEX_SCALE) * start.sizeZ);
-    for (let yIndex = minYIndex; yIndex <= maxYIndex; yIndex += GRID_INDEX_SCALE) {
-      const y = normalize(minY + ((yIndex - minYIndex) / GRID_INDEX_SCALE) * start.sizeY);
-      for (let xIndex = minXIndex; xIndex <= maxXIndex; xIndex += GRID_INDEX_SCALE) {
-        const x = normalize(minX + ((xIndex - minXIndex) / GRID_INDEX_SCALE) * start.sizeX);
-        const voxel = { x, y, z, sizeX: start.sizeX, sizeY: start.sizeY, sizeZ: start.sizeZ, xIndex, yIndex, zIndex };
+  for (let zIndex = minZIndex, z = start.z; z < selectionMaxZ - 1e-9; zIndex += GRID_INDEX_SCALE, z = normalize(z + start.sizeZ)) {
+    const sizeZ = normalize(Math.min(start.sizeZ, selectionMaxZ - z));
+    for (const yCell of yCells) {
+      for (const xCell of xCells) {
+        const voxel = {
+          x: xCell.coordinate,
+          y: yCell.coordinate,
+          z,
+          sizeX: xCell.size,
+          sizeY: yCell.size,
+          sizeZ,
+          xIndex: xCell.index,
+          yIndex: yCell.index,
+          zIndex,
+        };
         voxels.set(voxelKey(voxel), voxel);
       }
     }
@@ -217,5 +248,11 @@ export function createRegionSelectionUnion(selections: RegionGridSelection[]): R
       max_z: cuboid.maxZ,
     }));
 
-  return { voxelCount: voxels.size, volumes };
+  const baseVoxelCount = [...voxels.values()].reduce((total, voxel) => (
+    total
+    + Math.round(voxel.sizeX / VOXEL_CELL_SIZE_M)
+      * Math.round(voxel.sizeY / VOXEL_CELL_SIZE_M)
+      * Math.round(voxel.sizeZ / VOXEL_CELL_SIZE_M)
+  ), 0);
+  return { displayVoxelCount: voxels.size, baseVoxelCount, volumes };
 }

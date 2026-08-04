@@ -55,7 +55,7 @@ export function formatUnit(unit: string | null | undefined): string {
 export function formatDisplayValue(value: string | null | undefined, fallback = '未知'): string {
   if (!value) return fallback;
   const labels: Record<string, string> = {
-    online: '在线', offline: '离线', normal: '正常', healthy: '正常', ok: '正常',
+    online: '在线', offline: '离线', planned_offline: '主动离线', normal: '正常', healthy: '正常', ok: '正常',
     excellent: '优', good: '良', moderate: '中', medium: '中',
     poor: '差', low: '低', high: '高', safe: '安全', warning: '警告',
     danger: '危险', critical: '严重', unknown: '未知', no_data: '无数据',
@@ -94,20 +94,22 @@ export function getStatusColor(status: string): string {
     working: '#34DF9A', maintenance: '#FFB33D',
     occupancy: '#B56CFF', fault: '#FF5C6D',
     pending: '#3D8CFF', assigned: '#2FD7FF', running: '#34DF9A',
-    paused: '#FFB33D', completed: '#34DF9A', failed: '#FF5C6D', offline: '#FF5C6D',
+    paused: '#FFB33D', completed: '#34DF9A', failed: '#FF5C6D', offline: '#FF5C6D', planned_offline: '#FFB33D',
   };
   return map[status] || '#687988';
 }
 
 /** Prefer gateway connectivity over the robot's last reported operating state in the UI. */
 export function getDeviceDisplayStatus(status: string, connectionStatus?: string): string {
-  return connectionStatus === 'offline' ? 'offline' : status;
+  if (connectionStatus === 'offline') return 'offline';
+  if (connectionStatus === 'planned_offline') return 'planned_offline';
+  return status;
 }
 
 /** 获取健康指标颜色 */
 export function getHealthColor(value: string): string {
   const map: Record<string, string> = {
-    ok: '#34DF9A', warn: '#FFB33D', fail: '#FF5C6D', busy: '#3D8CFF',
+    ok: '#34DF9A', warn: '#FFB33D', fail: '#FF5C6D', busy: '#3D8CFF', planned_offline: '#FFB33D',
   };
   return map[value] || '#687988';
 }

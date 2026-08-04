@@ -128,7 +128,11 @@ class AlertEngine:
             battery = _number(state.get("battery"), default=100.0)
             health = state.get("health") or {}
             heartbeat = _parse_time(state.get("last_heartbeat"))
-            if "last_heartbeat" in state and (heartbeat is None or heartbeat < datetime.now(timezone.utc) - timedelta(seconds=settings.gateway_offline_after_seconds)):
+            if state.get("connection_status") == "offline" or (
+                "connection_status" not in state
+                and "last_heartbeat" in state
+                and (heartbeat is None or heartbeat < datetime.now(timezone.utc) - timedelta(seconds=settings.gateway_offline_after_seconds))
+            ):
                 violations.append(
                     AlertViolation(
                         key=f"device_offline:{device_id}",

@@ -2,7 +2,7 @@
 export type DeviceType = 'agv' | 'excavator' | 'crane' | 'masonry' | 'inspect' | 'inspection';
 /** 设备状态 */
 export type DeviceStatus = 'idle' | 'charging' | 'moving' | 'working' | 'paused' | 'maintenance' | 'occupancy' | 'fault';
-export type DeviceConnectionStatus = 'online' | 'offline';
+export type DeviceConnectionStatus = 'online' | 'offline' | 'planned_offline';
 
 export interface DevicePosition { x: number; y: number; z: number; }
 
@@ -28,6 +28,12 @@ export interface Device {
   section_id: string | null; capabilities: Record<string, unknown>;
   health: DeviceHealth; current_task?: string | null; task_progress?: number;
   model?: string | null; last_heartbeat?: string | null; connection_status?: DeviceConnectionStatus;
+  offline?: {
+    reported_at: string;
+    reason_code: string | null;
+    note: string | null;
+    expected_reconnect_at: string | null;
+  } | null;
   protocol_version?: 'v1' | 'v2';
   operational_metrics?: DeviceOperationalMetrics;
   work_capacities?: Array<{

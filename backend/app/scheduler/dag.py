@@ -95,7 +95,7 @@ class TaskDAG:
         """Return all pending tasks whose dependencies are all completed, sorted by priority."""
         ready = [
             n for n in self._nodes.values()
-            if n.status in {"pending", "assigned", "running"} and self._all_deps_completed(n.task_id)
+            if n.status == "pending" and self._all_deps_completed(n.task_id)
         ]
         ready.sort(key=lambda n: n.priority, reverse=True)
         return ready

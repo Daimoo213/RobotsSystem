@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,10 +21,32 @@ from app.models.models import MapAsset, MapPath, MapPoint, MapRegion, Project, T
 
 router = APIRouter(prefix="/map", tags=["map"])
 DEFAULT_MAP_COLOR = "#2FD7FF"
-MAX_GRID_SEGMENTS = 20_000
+MAX_GRID_SEGMENTS = 50_000
+MAX_GRID_DISPLAY_STEP_CELLS = 64
 MAX_REGION_VOLUMES = 20_000
-MAX_PATH_POINTS = 10_000
+MAX_PATH_BATCH_SIZE = 1_000
 MAX_PATH_DEVICE_TYPES = 128
+VOXEL_CELL_SIZE_M = 0.05
+VOXEL_CELL_VOLUME_M3 = VOXEL_CELL_SIZE_M ** 3
+
+
+def _grid_segment_count(columns: int, rows: int, layers: int, step_cells: int) -> int:
+    displayed_columns = math.ceil(columns / step_cells)
+    displayed_rows = math.ceil(rows / step_cells)
+    return (displayed_columns + 1) * (displayed_rows + 1) + (displayed_columns + displayed_rows + 2) * (layers + 1)
+
+
+def _grid_display_step(columns: int, rows: int, layers: int) -> int:
+    """Return the smallest display stride that keeps the overview grid drawable."""
+
+    lower, upper = 1, max(columns, rows)
+    while lower < upper:
+        middle = (lower + upper) // 2
+        if _grid_segment_count(columns, rows, layers, middle) <= MAX_GRID_SEGMENTS:
+            upper = middle
+        else:
+            lower = middle + 1
+    return lower
 
 
 class MapGridConfig(BaseModel):
@@ -35,23 +57,48 @@ class MapGridConfig(BaseModel):
     origin_x: float = Field(default=-30.0, description="三维栅格最小角的地图 X 坐标，单位为米；不会重新定义项目地图原点")
     origin_y: float = Field(default=-30.0, description="三维栅格最小角的地图 Y 坐标，单位为米；不会重新定义项目地图原点")
     origin_z: float = Field(default=0.0, description="三维栅格底面的地图 Z 高度，单位为米；+Z 竖直向上")
-    cell_length: float = Field(default=1.0, gt=0.01, le=100.0, description="单个栅格在 X 方向代表的长度，单位为米")
-    cell_width: float = Field(default=1.0, gt=0.01, le=100.0, description="单个栅格在 Y 方向代表的宽度，单位为米")
-    cell_height: float = Field(default=0.5, gt=0.01, le=100.0, description="单个栅格在 Z 方向代表的高度，单位为米")
+    cell_volume_m3: float = Field(default=VOXEL_CELL_VOLUME_M3, description="单个体素固定代表的体积，单位为立方米，由每边尺寸派生")
+    cell_length: float = Field(default=VOXEL_CELL_SIZE_M, gt=0.01, le=100.0, description="单个正立方体体素在 X 方向的固定边长，单位为米")
+    cell_width: float = Field(default=VOXEL_CELL_SIZE_M, gt=0.01, le=100.0, description="单个正立方体体素在 Y 方向的固定边长，单位为米")
+    cell_height: float = Field(default=VOXEL_CELL_SIZE_M, gt=0.01, le=100.0, description="单个正立方体体素在 Z 方向的固定边长，单位为米")
     extent_length: float = Field(default=60.0, gt=0.01, le=1000.0, description="三维栅格在 X 方向显示的总长度，单位为米")
     extent_width: float = Field(default=60.0, gt=0.01, le=1000.0, description="三维栅格在 Y 方向显示的总宽度，单位为米")
     vertical_layers: int = Field(default=6, ge=1, le=200, description="三维栅格显示的垂直层数")
+    display_voxel_multiplier: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description=(
+            "O&M 编辑时一个显示体素沿每个轴覆盖的最小体素数量；1 表示直接按 0.05 米最小体素操作。"
+            "该值只改变显示和编辑聚合尺度，不改变机器人地图或设备同步中的真实体素尺度"
+        ),
+    )
     line_color: str = Field(default="#5BB7FF", pattern=r"^#[0-9a-fA-F]{6}$", description="三维栅格线条的六位十六进制颜色")
-    line_thickness: float = Field(default=0.04, gt=0.001, le=1.0, description="三维栅格线条的真实空间粗细，单位为米")
+    line_thickness: float = Field(default=0.004, ge=0.001, le=1.0, description="三维栅格线条的真实空间粗细，单位为米")
     opacity: float = Field(default=0.38, gt=0.01, le=1.0, description="三维栅格线条透明度")
 
     @model_validator(mode="after")
     def validate_grid_complexity(self) -> "MapGridConfig":
+        dimensions = (self.cell_length, self.cell_width, self.cell_height)
+        if not math.isclose(self.cell_volume_m3, VOXEL_CELL_VOLUME_M3, rel_tol=0, abs_tol=1e-12) or any(
+            not math.isclose(dimension, VOXEL_CELL_SIZE_M, rel_tol=0, abs_tol=1e-9)
+            for dimension in dimensions
+        ):
+            raise ValueError(
+                f"项目体素栅格固定为每边 {VOXEL_CELL_SIZE_M} 米的正立方体，单格体积为 {VOXEL_CELL_VOLUME_M3:.6f} 立方米"
+            )
+        if any(
+            not math.isclose(extent / VOXEL_CELL_SIZE_M, round(extent / VOXEL_CELL_SIZE_M), rel_tol=0, abs_tol=1e-9)
+            for extent in (self.extent_length, self.extent_width)
+        ):
+            raise ValueError(f"三维栅格显示范围必须是最小体素边长 {VOXEL_CELL_SIZE_M} 米的整数倍")
         columns = math.ceil(self.extent_length / self.cell_length)
         rows = math.ceil(self.extent_width / self.cell_width)
-        segments = (columns + 1) * (rows + 1) + (columns + rows + 2) * (self.vertical_layers + 1)
-        if segments > MAX_GRID_SEGMENTS:
-            raise ValueError(f"当前栅格配置会生成超过 {MAX_GRID_SEGMENTS} 条线段，请增大栅格尺寸或缩小显示范围")
+        display_step = _grid_display_step(columns, rows, self.vertical_layers)
+        if display_step > MAX_GRID_DISPLAY_STEP_CELLS:
+            raise ValueError(
+                f"当前显示范围需要每 {display_step} 个体素绘制一条概览线，超过允许的 {MAX_GRID_DISPLAY_STEP_CELLS} 格显示跨度，请缩小显示范围"
+            )
         return self
 
 
@@ -153,7 +200,7 @@ class MapPointInput(BaseModel):
 
 
 class MapPathInput(BaseModel):
-    """A traversable robot route stored as ordered three-dimensional map points."""
+    """A traversable robot road segment stored by its ordered endpoints."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -161,26 +208,26 @@ class MapPathInput(BaseModel):
     name: str = Field(description="路径显示名称", min_length=1, max_length=64)
     points: list[list[float]] = Field(
         description=(
-            "按通行顺序排列的连续三维地图坐标点，每个点固定为 [x, y, z]，单位为米；"
-            "z 表示高程，相邻点的高程差用于表达上下坡"
+            "道路的两个端点，按道路方向固定为 [起点, 终点]；每个端点均为 [x, y, z]，单位为米。"
+            "z 表示高程，两个端点的高程差用于表达上下坡；多段道路必须作为多条记录保存"
         ),
         min_length=2,
-        max_length=MAX_PATH_POINTS,
+        max_length=2,
     )
     direction: Literal["bidirectional", "forward", "reverse"] = Field(
         default="bidirectional",
         description=(
-            "通行方向：bidirectional 表示双向；forward 仅允许按 points 的首点至末点通行；"
-            "reverse 仅允许按末点至首点通行"
+            "通行方向：bidirectional 表示双向；forward 仅允许从 points[0] 起点通行到 points[1] 终点；"
+            "reverse 仅允许从 points[1] 终点通行到 points[0] 起点"
         ),
     )
     min_width_m: float = Field(
         description="机器人通行所需的最小净宽，单位为米",
-        gt=0.05,
+        ge=VOXEL_CELL_SIZE_M,
         le=100.0,
     )
     max_slope_percent: float = Field(
-        description="允许的最大坡度百分比；服务端会校验每个连续路径段的实际坡度不超过此值",
+        description="允许的最大坡度百分比；服务端会校验道路起点与终点之间的实际坡度不超过此值",
         ge=0.0,
         le=100.0,
     )
@@ -215,7 +262,7 @@ class MapPathInput(BaseModel):
             if previous is not None:
                 horizontal_distance = math.hypot(point[0] - previous[0], point[1] - previous[1])
                 if horizontal_distance <= 1e-6:
-                    raise ValueError("相邻路径点的水平位置不能重合，路径不能包含垂直段或重复点")
+                    raise ValueError("道路起点和终点的水平位置不能重合，道路不能包含垂直段或重复点")
                 max_actual_slope = max(max_actual_slope, abs(point[2] - previous[2]) / horizontal_distance * 100)
             previous = point
         if max_actual_slope > self.max_slope_percent + 1e-9:
@@ -262,6 +309,8 @@ def _path_dict(path: MapPath) -> dict:
         "code": path.code,
         "name": path.name,
         "points": path.points,
+        "start": path.points[0],
+        "end": path.points[1],
         "direction": path.direction,
         "min_width_m": path.min_width_m,
         "max_slope_percent": path.max_slope_percent,
@@ -290,23 +339,87 @@ async def _active_project(db: AsyncSession) -> Project:
 
 
 def _grid_config(project: Project) -> MapGridConfig:
-    return MapGridConfig.model_validate({**DEFAULT_GRID_CONFIG, **(project.map_grid_config or {})})
+    saved = project.map_grid_config or {}
+    try:
+        return MapGridConfig.model_validate({**DEFAULT_GRID_CONFIG, **saved})
+    except ValidationError:
+        # Older projects allowed independent X/Y/Z cell sizes. Retain their display
+        # settings while moving the map lattice to the fixed 0.05 m project contract.
+        display_keys = {
+            "origin_x", "origin_y", "origin_z", "extent_length", "extent_width",
+            "vertical_layers", "display_voxel_multiplier", "line_color", "line_thickness", "opacity",
+        }
+        return MapGridConfig.model_validate({
+            **DEFAULT_GRID_CONFIG,
+            **{key: value for key, value in saved.items() if key in display_keys},
+        })
 
 
 @router.get(
     "/grid-config",
     summary="获取三维栅格地图配置",
-    description="读取当前项目持久化的三维栅格尺寸、显示范围、线条样式和透明度。调用方需要具备地图读取权限。",
+    description="读取当前项目持久化的最小体素尺度、显示范围、显示体素聚合倍率、线条样式和透明度。调用方需要具备地图读取权限。",
     response_description="当前项目的三维栅格地图配置",
 )
 async def get_grid_config(db: AsyncSession = Depends(get_db), _role=Depends(require("map.read"))) -> dict:
     return _grid_config(await _active_project(db)).model_dump()
 
 
+@router.post(
+    "/paths/batch",
+    summary="批量创建机器人道路",
+    description=(
+        "由 O&M 一次保存多条真实测绘或现场确认的道路段。请求体直接为道路数组；每条道路仅包含"
+        "按方向排列的起点和终点。服务端先校验整批编码，任一编码在请求内重复或已存在时整批均不写入。"
+    ),
+    response_description="按请求顺序返回已创建的机器人道路；start 和 end 对应两个持久化端点。",
+    openapi_extra={"requestBody": {"description": "待原子创建的机器人道路数组，每一项均为完整道路与通行约束"}},
+)
+async def create_paths_batch(
+    req: Annotated[
+        list[MapPathInput],
+        Body(
+            description="待原子创建的机器人道路数组，每一项均为完整道路与通行约束",
+            min_length=1,
+            max_length=MAX_PATH_BATCH_SIZE,
+        ),
+    ],
+    db: AsyncSession = Depends(get_db),
+    _role=Depends(require("map.manage")),
+) -> list[dict]:
+    seen_codes: set[str] = set()
+    duplicate_codes: set[str] = set()
+    for path in req:
+        if path.code in seen_codes:
+            duplicate_codes.add(path.code)
+        seen_codes.add(path.code)
+    if duplicate_codes:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "duplicate_path_code_in_batch", "codes": sorted(duplicate_codes)},
+        )
+
+    existing_codes = sorted(
+        (await db.execute(select(MapPath.code).where(MapPath.code.in_(seen_codes)))).scalars().all()
+    )
+    if existing_codes:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "path_code_already_exists", "codes": existing_codes},
+        )
+
+    paths = [MapPath(**path.model_dump()) for path in req]
+    db.add_all(paths)
+    await db.flush()
+    response = [_path_dict(path) for path in paths]
+    _publish_map_change("map_paths_batch_created", {"path_ids": [item["id"] for item in response]})
+    return response
+
+
 @router.put(
     "/grid-config",
     summary="更新三维栅格地图配置",
-    description="保存当前项目的三维栅格尺寸、显示范围与线条样式。仅 O&M 可修改；配置会同步给所有已登录的地图视图。",
+    description="保存当前项目的三维栅格显示范围、编辑聚合倍率与线条样式。最小体素固定为 0.05 米，不能通过该接口修改。仅 O&M 可修改；配置会同步给所有已登录的地图视图。",
     response_description="保存后的三维栅格地图配置",
 )
 async def update_grid_config(

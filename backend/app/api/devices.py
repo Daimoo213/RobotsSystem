@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -183,6 +183,31 @@ class GatewayTelemetry(BaseModel):
     metrics: GatewayOperationalMetrics | None = Field(default=None, description="设备实测运行指标。")
     observed_at: datetime | None = Field(default=None, description="设备采样时间，使用带时区的 ISO 8601 时间；省略时以服务端接收时间为准。")
     mission: GatewayMissionUpdate | None = Field(default=None, description="当前任务执行状态更新；无执行任务时可省略。")
+
+
+class GatewayOfflineReport(BaseModel):
+    """An explicit, graceful gateway disconnect distinct from heartbeat loss."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1, max_length=96, description="主动下线事件的幂等标识；重试时必须保持不变。")
+    reason_code: Literal[
+        "shutdown",
+        "maintenance",
+        "network_change",
+        "safety_stop",
+        "operator_requested",
+        "other",
+    ] = Field(description="主动下线原因编码。正常关机使用 shutdown，计划维护使用 maintenance。")
+    note: str | None = Field(default=None, max_length=512, description="可选的现场说明；不得包含密钥、口令或个人敏感信息。")
+    observed_at: datetime | None = Field(default=None, description="设备完成本地下线准备的真实时间；省略时使用服务端接收时间。")
+    expected_reconnect_at: datetime | None = Field(default=None, description="预计重新接入时间；无法确定时省略。")
+
+    @model_validator(mode="after")
+    def validate_timeline(self) -> "GatewayOfflineReport":
+        if self.observed_at and self.expected_reconnect_at and self.expected_reconnect_at < self.observed_at:
+            raise ValueError("expected_reconnect_at cannot be earlier than observed_at")
+        return self
 
 
 class GatewayCommandAck(BaseModel):
@@ -491,6 +516,10 @@ async def register_gateway_device(
         device.section_id = req.section_id
         device.health = health
         device.last_heartbeat = _now()
+        device.offline_reported_at = None
+        device.offline_reason_code = None
+        device.offline_note = None
+        device.offline_expected_reconnect_at = None
         device.protocol_version = req.protocol_version
     await db.flush()
     await db.execute(delete(DeviceWorkCapacity).where(DeviceWorkCapacity.device_id == device.id))
@@ -593,6 +622,10 @@ async def report_gateway_telemetry(
     if req.metrics is not None:
         await _create_maintenance_reminders(db, device)
     device.last_heartbeat = received_at
+    device.offline_reported_at = None
+    device.offline_reason_code = None
+    device.offline_note = None
+    device.offline_expected_reconnect_at = None
 
     payload = req.model_dump(mode="json", exclude_none=True)
     payload["global_estop_active"] = estop_active
@@ -638,6 +671,74 @@ async def report_gateway_telemetry(
     if execution:
         await _publish_execution_task_update(db, execution)
     return {"ok": True, "device": _device_dict(device), "global_estop_active": estop_active, "execution_id": execution.gateway_execution_id if execution else None}
+
+
+@router.post(
+    "/gateway/{device_code}/offline",
+    summary="报告机器人主动下线",
+    description=(
+        "供机器人或设备网关在完成本地安全停车、任务收尾或维护准备后主动报告下线。"
+        "主动下线立即停止该设备参与新的调度，并与心跳超时的异常离线分开记录；"
+        "后续成功遥测或重新注册会自动恢复在线。"
+    ),
+    response_description="返回幂等处理结果和设备最新主动下线状态。",
+)
+async def report_gateway_offline(
+    device_code: Annotated[str, Path(description="已注册设备的唯一编码。")],
+    req: Annotated[GatewayOfflineReport, Body(description="设备完成本地下线准备后的主动下线报告。")],
+    db: AsyncSession = Depends(get_db),
+    x_device_gateway_key: str | None = Header(default=None, description="设备首次注册时获得的专属网关密钥。"),
+) -> dict:
+    """Persist a graceful disconnect without misclassifying it as heartbeat failure."""
+
+    device = await _require_device_key(db, device_code, x_device_gateway_key)
+    received_at = _now()
+    if req.observed_at and req.observed_at > received_at + timedelta(seconds=settings.gateway_telemetry_future_tolerance_seconds):
+        raise HTTPException(status_code=422, detail="observed_at exceeds allowed future tolerance")
+    duplicate = await db.scalar(
+        select(DeviceEvent).where(DeviceEvent.device_id == device.id, DeviceEvent.event_id == req.event_id)
+    )
+    if duplicate:
+        return {"ok": True, "duplicate": True, "device": _device_dict(device)}
+
+    device.offline_reported_at = received_at
+    device.offline_reason_code = req.reason_code
+    device.offline_note = req.note
+    device.offline_expected_reconnect_at = req.expected_reconnect_at
+    device.health = {**(device.health or {}), "connection": "planned_offline"}
+    db.add(
+        DeviceEvent(
+            time=received_at,
+            device_id=device.id,
+            event_type="offline",
+            event_id=req.event_id,
+            received_at=received_at,
+            payload={
+                **req.model_dump(mode="json", exclude_none=True),
+                "received_at": received_at.isoformat(),
+            },
+        )
+    )
+
+    # Resolve the stale heartbeat-loss alert immediately. An intentional shutdown
+    # is visible in the device state and must not be presented as a network fault.
+    active_offline_alerts = await db.execute(
+        select(Alert).where(
+            Alert.device_id == device.id,
+            Alert.category == "device_offline",
+            Alert.status.in_(("open", "ack")),
+        )
+    )
+    for alert in active_offline_alerts.scalars().all():
+        alert.status = "resolved"
+        alert.resolved_at = received_at
+
+    from app.core.redis import redis
+
+    await redis().delete(f"device:{device.id}:heartbeat")
+    await db.commit()
+    await _publish_device_snapshot(db)
+    return {"ok": True, "duplicate": False, "device": _device_dict(device)}
 
 
 @router.post(
@@ -1152,5 +1253,11 @@ def _device_dict(d: Device) -> dict:
         "current_task": (d.operational_metrics or {}).get("current_task"),
         "task_progress": (d.operational_metrics or {}).get("task_progress"),
         "last_heartbeat": d.last_heartbeat.isoformat() if d.last_heartbeat else None,
-        "connection_status": connection_status(d.last_heartbeat),
+        "connection_status": connection_status(d.last_heartbeat, offline_reported_at=d.offline_reported_at),
+        "offline": {
+            "reported_at": d.offline_reported_at.isoformat(),
+            "reason_code": d.offline_reason_code,
+            "note": d.offline_note,
+            "expected_reconnect_at": d.offline_expected_reconnect_at.isoformat() if d.offline_expected_reconnect_at else None,
+        } if d.offline_reported_at else None,
     }

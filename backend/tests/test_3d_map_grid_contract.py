@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.api.map import MapGridConfig, MapRegionInput, router
+from app.api.map import VOXEL_CELL_SIZE_M, VOXEL_CELL_VOLUME_M3, MapGridConfig, MapRegionInput, router
 
 
 def test_3d_grid_routes_are_exposed() -> None:
@@ -69,11 +69,35 @@ def test_region_accepts_more_than_the_legacy_component_limit() -> None:
 
 
 def test_grid_configuration_limits_rendered_line_count() -> None:
-    config = MapGridConfig(cell_length=0.5, cell_width=0.5, cell_height=0.25, extent_length=10, extent_width=10, vertical_layers=8)
+    config = MapGridConfig(extent_length=10, extent_width=10, vertical_layers=8)
 
     assert config.line_color == "#5BB7FF"
-    with pytest.raises(ValidationError, match="线段"):
-        MapGridConfig(cell_length=0.02, cell_width=0.02, extent_length=1000, extent_width=1000)
+    assert config.cell_volume_m3 == VOXEL_CELL_VOLUME_M3
+    assert config.cell_length == VOXEL_CELL_SIZE_M
+    assert config.cell_width == VOXEL_CELL_SIZE_M
+    assert config.cell_height == VOXEL_CELL_SIZE_M
+    assert config.display_voxel_multiplier == 1
+    with pytest.raises(ValidationError, match="64"):
+        MapGridConfig(extent_length=1000, extent_width=1000)
+
+
+def test_grid_rejects_dimensions_that_do_not_match_the_fixed_cell_size() -> None:
+    with pytest.raises(ValidationError, match="0.05"):
+        MapGridConfig(cell_length=0.1)
+
+
+def test_grid_rejects_display_extent_that_cuts_through_a_minimum_voxel() -> None:
+    with pytest.raises(ValidationError, match="整数倍"):
+        MapGridConfig(extent_length=10.03)
+
+
+def test_grid_limits_display_voxel_aggregation_without_changing_real_voxels() -> None:
+    config = MapGridConfig(display_voxel_multiplier=8)
+
+    assert config.display_voxel_multiplier == 8
+    assert config.cell_length == VOXEL_CELL_SIZE_M
+    with pytest.raises(ValidationError):
+        MapGridConfig(display_voxel_multiplier=33)
 
 
 def test_default_grid_keeps_the_map_origin_at_its_center() -> None:

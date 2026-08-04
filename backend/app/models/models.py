@@ -70,6 +70,12 @@ class Device(Base):
 
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # A gateway may explicitly announce a normal shutdown or maintenance window.
+    # This is distinct from an expired heartbeat, which remains an unexpected loss.
+    offline_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    offline_reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    offline_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    offline_expected_reconnect_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 体检指标: connection / location / battery / task / safety
     health: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -350,6 +356,7 @@ class MapPath(Base):
             "direction IN ('bidirectional', 'forward', 'reverse')",
             name="ck_map_paths_direction",
         ),
+        CheckConstraint("jsonb_array_length(points) = 2", name="ck_map_paths_two_endpoints"),
         CheckConstraint("status IN ('active', 'disabled')", name="ck_map_paths_status"),
     )
 

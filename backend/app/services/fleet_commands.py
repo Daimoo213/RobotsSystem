@@ -281,6 +281,11 @@ async def _aggregate_allocated_task(
         }
     ]
     plan = await db.scalar(select(TaskResourcePlan).where(TaskResourcePlan.task_id == task.id))
+    # Gateways may retransmit terminal telemetry. A previously confirmed
+    # cancellation is immutable and must never re-enter planning.
+    if task.status == "cancelled" or getattr(task, "cancelled_at", None) is not None:
+        await _finalize_task_cancellation(db, task, timestamp, plan)
+        return False
     if task.status == "cancel_requested":
         if not active_allocations:
             await _finalize_task_cancellation(db, task, timestamp, plan)
@@ -364,7 +369,11 @@ async def apply_execution_telemetry(
     if execution is None:
         raise HTTPException(status_code=409, detail="unknown execution_id for device")
 
-    task = await db.get(Task, execution.task_id)
+    # Serialize telemetry projection with task cancellation and scheduler
+    # dispatch so a stale report cannot overwrite a newer control decision.
+    task = await db.scalar(
+        select(Task).where(Task.id == execution.task_id).with_for_update()
+    )
     execution_result = dict(getattr(execution, "result", {}) or {})
     reported_state = execution_state or execution.state
     control_return_state = str(execution_result.get("control_return_state") or "")

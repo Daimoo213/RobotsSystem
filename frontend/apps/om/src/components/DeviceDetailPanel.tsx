@@ -43,7 +43,10 @@ export function DeviceDetailPanel() {
           <Row label="名称" value={device.name} />
            <Row label="类型" value={DEVICE_TYPE_LABELS[device.type] || '未知设备类型'} />
            <Row label="连接状态" value={DEVICE_STATUS_LABELS[displayStatus] || '未知状态'} color={statusColor} />
-           {displayStatus === 'offline' && <Row label="最后运行状态" value={DEVICE_STATUS_LABELS[device.status] || '未知状态'} color={getStatusColor(device.status)} />}
+           {(displayStatus === 'offline' || displayStatus === 'planned_offline') && <Row label="最后运行状态" value={DEVICE_STATUS_LABELS[device.status] || '未知状态'} color={getStatusColor(device.status)} />}
+           {device.offline?.reason_code && <Row label="主动下线原因" value={formatOfflineReason(device.offline.reason_code)} color="#FFB33D" />}
+           {device.offline?.expected_reconnect_at && <Row label="预计恢复时间" value={new Date(device.offline.expected_reconnect_at).toLocaleString()} />}
+           {device.offline?.note && <Row label="下线说明" value={device.offline.note} />}
           <Row label="标段" value={device.section_id || '-'} />
         </Section>
 
@@ -99,4 +102,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Row({ label, value, mono, color }: { label: string; value: string; mono?: boolean; color?: string }) {
   return <div className="flex justify-between py-0.5 text-[12px]"><span className="text-[#79A3BF]">{label}</span><span className={mono ? 'font-mono' : ''} style={{ color: color || '#E6F6FF' }}>{value}</span></div>;
+}
+
+function formatOfflineReason(reason: string): string {
+  const labels: Record<string, string> = {
+    shutdown: '正常关机', maintenance: '计划维护', network_change: '网络切换',
+    safety_stop: '安全停机', operator_requested: '人工请求', other: '其他原因',
+  };
+  return labels[reason] || '其他原因';
 }

@@ -75,7 +75,7 @@ class SchedulerEngine:
         """Rebuild the scheduling view from the database so restarts cannot lose work."""
 
         async with async_session_factory() as session:
-            active_scope = Task.status.in_(SCHEDULER_TASK_STATES)
+            active_scope = Task.status.in_(SCHEDULER_TASK_STATES) & Task.cancelled_at.is_(None)
             if self._script_id:
                 active_scope = active_scope & (Task.script_id == self._script_id)
             statement = select(Task).where(or_(Task.status == "completed", active_scope))
@@ -116,7 +116,10 @@ class SchedulerEngine:
             changed = False
             for device in devices.scalars().all():
                 health = dict(device.health or {})
-                expected_health = connection_health(device.last_heartbeat)
+                expected_health = connection_health(
+                    device.last_heartbeat,
+                    offline_reported_at=getattr(device, "offline_reported_at", None),
+                )
                 if health.get("connection") == expected_health:
                     continue
                 device.health = {**health, "connection": expected_health}
@@ -134,7 +137,11 @@ class SchedulerEngine:
                 task = await session.scalar(
                     select(Task)
                     .options(selectinload(Task.map_point), selectinload(Task.return_point))
-                    .where(Task.id == uuid.UUID(node.task_id), Task.status.in_(("pending", "assigned", "running")))
+                    .where(
+                        Task.id == uuid.UUID(node.task_id),
+                        Task.status == "pending",
+                        Task.cancelled_at.is_(None),
+                    )
                     .with_for_update(skip_locked=True)
                 )
                 if not task or not task.map_point_id:
@@ -366,7 +373,6 @@ class SchedulerEngine:
         task: Task,
         target: dict[str, float],
     ) -> tuple[list[dict], str]:
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.gateway_offline_after_seconds)
         devices = (
             await session.execute(select(Device).where(Device.gateway_enabled == True).order_by(Device.code))
         ).scalars().all()
@@ -382,7 +388,11 @@ class SchedulerEngine:
         compatible = [device for device in devices if device_is_compatible(task, device)]
         if not compatible:
             return [], "no_compatible_device"
-        online = [device for device in compatible if device.last_heartbeat and device.last_heartbeat >= cutoff]
+        online = [
+            device
+            for device in compatible
+            if connection_status(device.last_heartbeat, offline_reported_at=getattr(device, "offline_reported_at", None)) == "online"
+        ]
         if not online:
             return [], "compatible_devices_offline"
         unreserved = [device for device in online if device.id not in active_device_ids]
@@ -397,10 +407,9 @@ class SchedulerEngine:
         return [_device_state(device) for device in powered], "awaiting_candidate"
 
     async def _device_is_still_available(self, session, task: Task, device: Device) -> bool:
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.gateway_offline_after_seconds)
         if not device.gateway_enabled or not device_is_compatible(task, device):
             return False
-        if not device.last_heartbeat or device.last_heartbeat < cutoff:
+        if connection_status(device.last_heartbeat, offline_reported_at=getattr(device, "offline_reported_at", None)) != "online":
             return False
         if device.status not in {"idle", "ready"} or device.battery < settings.low_battery_threshold:
             return False
@@ -500,7 +509,13 @@ def _device_state(device: Device) -> dict:
         "current_task": (device.operational_metrics or {}).get("current_task"),
         "task_progress": (device.operational_metrics or {}).get("task_progress"),
         "last_heartbeat": device.last_heartbeat.isoformat() if device.last_heartbeat else None,
-        "connection_status": connection_status(device.last_heartbeat),
+        "connection_status": connection_status(device.last_heartbeat, offline_reported_at=getattr(device, "offline_reported_at", None)),
+        "offline": {
+            "reported_at": device.offline_reported_at.isoformat(),
+            "reason_code": getattr(device, "offline_reason_code", None),
+            "note": getattr(device, "offline_note", None),
+            "expected_reconnect_at": device.offline_expected_reconnect_at.isoformat() if getattr(device, "offline_expected_reconnect_at", None) else None,
+        } if getattr(device, "offline_reported_at", None) else None,
     }
 
 

@@ -461,31 +461,64 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const hasExecutionHistory = task.resource_allocations.some((allocation) => allocation.execution_id !== null);
+  const pauseRequested = task.resource_allocations.some((allocation) => allocation.state === 'pause_requested');
+  const resumeRequested = task.resource_allocations.some((allocation) => allocation.state === 'resume_requested');
+  const canPause = ['assigned', 'running'].includes(task.status);
+  const canCancel = ['assigned', 'running', 'paused', 'reassign_pending'].includes(task.status)
+    || (task.status === 'pending' && hasExecutionHistory);
+  const canDelete = task.status === 'pending' && !hasExecutionHistory;
 
   const execute = async (action: () => Promise<unknown>) => {
     setBusy(true); setError(''); setNotice('');
     try { await action(); onClose(); } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败'); } finally { setBusy(false); }
   };
 
-  const handleCancel = async () => {
-    if (!window.confirm(`确认取消任务“${task.name}”吗？平台会向已分配设备下发取消命令，并等待设备遥测确认。`)) return;
-
+  const submitControl = async (
+    action: () => Promise<{ ok: boolean; task?: Task }>,
+    successNotice: string,
+    failureMessage: string,
+  ) => {
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const result = await cancelTask(task.id);
+      const result = await action();
       if (!result.ok) {
-        setError('任务取消请求未完成，请刷新后确认任务状态');
+        setError(failureMessage);
         return;
       }
       if (result.task) updateTask(result.task);
-      setNotice('取消命令已下发，正在等待设备遥测确认。');
+      setNotice(successNotice);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '提交任务取消请求失败');
+      setError(reason instanceof Error ? reason.message : failureMessage);
     } finally {
       setBusy(false);
     }
+  };
+
+  const handlePause = () => submitControl(
+    () => pauseTask(task.id),
+    '暂停请求已下发，正在等待设备遥测确认。',
+    '提交任务暂停请求失败，请刷新后确认任务状态',
+  );
+
+  const handleResume = () => submitControl(
+    () => resumeTask(task.id),
+    '恢复请求已下发，正在等待设备遥测确认。',
+    '提交任务恢复请求失败，请刷新后确认任务状态',
+  );
+
+  const handleCancel = async () => {
+    const confirmation = hasExecutionHistory
+      ? `确认取消任务“${task.name}”吗？平台会停止后续调度；存在活动设备时会下发取消命令并等待遥测确认。`
+      : `确认取消任务“${task.name}”吗？任务将不再参与后续调度，但会保留取消审计记录。`;
+    if (!window.confirm(confirmation)) return;
+    await submitControl(
+      () => cancelTask(task.id),
+      '取消请求已提交，正在等待任务状态更新。',
+      '提交任务取消请求失败，请刷新后确认任务状态',
+    );
   };
 
   const handleDelete = async () => {
@@ -549,13 +582,13 @@ function TaskDetailModal({ task, onClose }: { task: Task; onClose: () => void })
         </div>
         <div className="mt-4 flex gap-2">
           <button disabled={busy || ['completed', 'cancel_requested', 'cancelled'].includes(task.status)} onClick={() => execute(() => recalculateTaskResourcePlan(task.id))} className="flex-1 rounded border border-[rgba(47,215,255,0.42)] py-1.5 text-[12px] text-[#2FD7FF] hover:bg-[rgba(47,215,255,0.1)] disabled:opacity-40">重新规划资源</button>
-          {task.status === 'running' ? (
-            <button disabled={busy} onClick={() => execute(() => pauseTask(task.id))} className="flex-1 rounded border border-[rgba(255,179,61,0.4)] py-1.5 text-[12px] text-[#FFB33D] hover:bg-[rgba(255,179,61,0.1)] disabled:opacity-40">暂停</button>
+          {canPause ? (
+            <button disabled={busy || pauseRequested} onClick={handlePause} className="flex-1 rounded border border-[rgba(255,179,61,0.4)] py-1.5 text-[12px] text-[#FFB33D] hover:bg-[rgba(255,179,61,0.1)] disabled:opacity-40">{pauseRequested ? '暂停请求中' : '暂停'}</button>
           ) : task.status === 'paused' ? (
-            <button disabled={busy} onClick={() => execute(() => resumeTask(task.id))} className="flex-1 rounded border border-[rgba(52,223,154,0.4)] py-1.5 text-[12px] text-[#34DF9A] hover:bg-[rgba(52,223,154,0.1)] disabled:opacity-40">恢复</button>
+            <button disabled={busy || resumeRequested} onClick={handleResume} className="flex-1 rounded border border-[rgba(52,223,154,0.4)] py-1.5 text-[12px] text-[#34DF9A] hover:bg-[rgba(52,223,154,0.1)] disabled:opacity-40">{resumeRequested ? '恢复请求中' : '恢复'}</button>
           ) : null}
-          {['assigned', 'running', 'paused', 'reassign_pending'].includes(task.status) && <button disabled={busy} onClick={handleCancel} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">取消任务</button>}
-          {task.status === 'pending' && <button disabled={busy} onClick={handleDelete} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">删除任务</button>}
+          {canCancel && <button disabled={busy} onClick={handleCancel} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">取消任务</button>}
+          {canDelete && <button disabled={busy} onClick={handleDelete} className="flex-1 rounded border border-[rgba(255,92,109,0.48)] py-1.5 text-[12px] text-[#FF5C6D] hover:bg-[rgba(255,92,109,0.12)] disabled:opacity-40">删除任务</button>}
           <button onClick={onClose} className="flex-1 rounded bg-[rgba(91,183,255,0.15)] py-1.5 text-[12px] text-[#2FD7FF]">关闭</button>
         </div>
         {error && <div className="mt-2 text-[11px] text-[#FF5C6D]">{error}</div>}

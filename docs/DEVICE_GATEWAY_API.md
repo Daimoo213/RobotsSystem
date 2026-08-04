@@ -153,6 +153,32 @@ preparing -> navigating_to_target -> arrived_at_target -> working
 
 缺少以上证据或返回点不匹配时，平台不会完成任务或解锁后续任务。同一 `boot_id` 中遥测 `sequence` 必须递增；重复 `event_id` 幂等返回，旧序列会被拒绝。平台不推算未上报的能耗、里程、运行时长或漂移值。
 
+## 设备主动下线
+
+正常关机、计划维护、网络切换或本机安全停车完成后，设备必须在停止心跳前调用：
+
+```http
+POST /api/devices/gateway/{device_code}/offline
+X-Device-Gateway-Key: <device_gateway_key>
+Content-Type: application/json
+```
+
+```json
+{
+  "event_id": "offline-20260804-0001",
+  "reason_code": "maintenance",
+  "note": "计划更换驱动轮",
+  "observed_at": "2026-08-04T12:00:00Z",
+  "expected_reconnect_at": "2026-08-04T16:00:00Z"
+}
+```
+
+`event_id` 是独立于遥测序列的幂等事件标识。`reason_code` 只能是 `shutdown`（正常关机）、`maintenance`（计划维护）、`network_change`（网络切换）、`safety_stop`（安全停机）、`operator_requested`（人工请求）或 `other`。`expected_reconnect_at` 早于 `observed_at` 时会返回 422。
+
+成功后设备连接状态立即变为 `planned_offline`（O&M 显示“主动离线”），设备不再参与新任务规划，现有心跳超时告警会被关闭。该状态不是任务终态：若仍有执行单元，平台保留最后一次真实任务遥测，不会自行伪造暂停、取消或完成。设备必须先按本机安全流程处理活动任务，再报告主动下线。
+
+下一次成功的 `POST /telemetry` 或已注册设备的 `POST /register` 会清除主动下线记录并恢复在线。没有主动下线报告且超过心跳阈值时，连接状态仍为 `offline`，会按异常失联处理。
+
 ## Calibration
 
 `POST /api/devices/gateway/{device_code}/calibration` records an outcome from
@@ -192,13 +218,13 @@ If-None-Match: "<上一次响应的 ETag>"   # 首次请求省略
 
 只有 `{device_code}` 对应的有效设备专属密钥可以调用。共享 `DEVICE_GATEWAY_API_KEY`、其他设备的密钥和操作员 JWT 均不能替代。设备被禁用时返回 403，项目未初始化时返回 409。
 
-当前 v1 是严格单项目控制平面：所有已注册且启用的设备都视为当前项目成员，可以读取当前项目的完整区域、点位、资产引用和点云。若某台设备不应再访问现场地图，O&M 必须禁用其网关凭据。数据库出现多个项目记录或没有唯一活动项目时，接口返回 409 `project_scope_ambiguous`，不会猜测地图归属。地图资产 `metadata` 不得存放对象存储密钥、设备密钥或其他秘密。
+当前 v2 是严格单项目控制平面：所有已注册且启用的设备都视为当前项目成员，可以读取当前项目的完整区域、点位、道路网络、资产引用和点云。若某台设备不应再访问现场地图，O&M 必须禁用其网关凭据。数据库出现多个项目记录或没有唯一活动项目时，接口返回 409 `project_scope_ambiguous`，不会猜测地图归属。地图资产 `metadata` 不得存放对象存储密钥、设备密钥或其他秘密。
 
 200 响应包含：
 
 | 字段 | 含义 |
 | --- | --- |
-| `schema_version` | 当前固定为 `v1` |
+| `schema_version` | 当前固定为 `v2` |
 | `device_code` | 已通过鉴权的设备编码 |
 | `project_code` / `project_name` | 当前活动项目标识和名称 |
 | `frame_id` | 所有区域、点位、资产和点云共同使用的项目地图坐标系 |
@@ -206,15 +232,16 @@ If-None-Match: "<上一次响应的 ETag>"   # 首次请求省略
 | `sync_revision` | 对当前持久化地图语义内容做规范化序列化后计算的 SHA-256 |
 | `regions` | 按编码排序的真实三维业务区域及体积组件 |
 | `points` | 按编码排序的真实业务点位、二维码和设备适用信息 |
-| `paths` | 按编码排序的真实机器人通行路径；每条路径含连续 `[x,y,z]` 点列、高程、通行方向、最小净宽、最大坡度、适用设备类型与状态 |
+| `paths` | 按编码排序的真实机器人道路段；每条道路恰有 `[起点,终点]` 两个 `[x,y,z]` 端点，并含方向、净宽、坡度、适用设备类型与状态 |
+| `road_network` | 启用道路推导出的节点与有向边；包含道路方向边和端点自动接驳边，是设备侧道路连通关系的唯一事实源 |
 | `assets` | 外部资产 URI、类型、坐标系、元数据和可选 SHA-256 |
 | `pointcloud` | `has_data`、`map_id`、来源、坐标系、点数、元数据、时间和下载路径；不包含完整点数组 |
 
-`sync_revision` 覆盖项目编码和 `frame_id`、区域、点位、通行路径、资产引用以及当前点云摘要。数据库查询顺序不会影响该值，任一受覆盖的真实内容变化都会产生新修订号。完整点数组不重复参与整图哈希，因为上传契约保证 `map_id` 不可变且相同 `map_id` 不会覆盖内容。
+`sync_revision` 覆盖项目编码和 `frame_id`、区域、点位、道路段、由道路推导的连通拓扑、资产引用以及当前点云摘要。数据库查询顺序不会影响该值，任一受覆盖的真实内容变化都会产生新修订号。完整点数组不重复参与整图哈希，因为上传契约保证 `map_id` 不可变且相同 `map_id` 不会覆盖内容。
 
-### 机器人通行路径
+### 机器人道路网络
 
-路径由 O&M 通过 `/api/map/paths` 维护，设备不能创建、修改或删除路径。同步清单中的每项路径具有以下约束：
+道路由 O&M 通过 `/api/map/paths` 和批量 `/api/map/paths/batch` 维护，设备不能创建、修改或删除道路。每条道路固定只有起点和终点；分支、路口和连续道路必须保存为多条道路，不能使用一个多点路径臆造连接。同步清单中的每项道路具有以下约束：
 
 ```json
 {
@@ -222,6 +249,8 @@ If-None-Match: "<上一次响应的 ETag>"   # 首次请求省略
   "code": "PATH-001",
   "name": "现场路径名称",
   "points": [[0.0, 0.0, 0.0], [10.0, 0.0, 0.5]],
+  "start": [0.0, 0.0, 0.0],
+  "end": [10.0, 0.0, 0.5],
   "direction": "bidirectional",
   "min_width_m": 2.5,
   "max_slope_percent": 8.0,
@@ -230,7 +259,35 @@ If-None-Match: "<上一次响应的 ETag>"   # 首次请求省略
 }
 ```
 
-`points` 必须是当前项目 `map_frame` 中按顺序排列的 `[x,y,z]` 坐标，单位均为米；`z` 是高程。`forward` 仅允许从首点到末点，`reverse` 仅允许从末点到首点，`bidirectional` 允许双向。`min_width_m` 是净宽门槛，`max_slope_percent` 是连续路径段允许的最大坡度；`status=disabled` 的路径保留几何供审计，但设备不得作为可通行路径使用。空 `device_types` 表示平台不按设备类型限制，设备仍必须自行执行本体尺寸、坡度、定位、避障和安全校验。平台只下发约束，不实现机器人侧寻路或运动控制。
+`points` 必须是当前项目 `map_frame` 中按 `[起点,终点]` 顺序排列的两个 `[x,y,z]` 坐标，单位均为米；`z` 是高程。`start` 和 `end` 是对应端点的冗余显式字段。`forward` 仅允许从起点到终点，`reverse` 仅允许从终点到起点，`bidirectional` 允许双向。`min_width_m` 是净宽门槛，`max_slope_percent` 是道路端点间允许的最大坡度；`status=disabled` 的道路保留几何供审计，但设备不得作为可通行道路使用。空 `device_types` 表示平台不按设备类型限制，设备仍必须自行执行本体尺寸、坡度、定位、避障和安全校验。
+
+`road_network` 的结构如下：
+
+```json
+{
+  "voxel_cell_size_m": 0.05,
+  "origin": [-30.0, -30.0, 0.0],
+  "nodes": [{
+    "id": "road:<道路 UUID>:start",
+    "path_id": "道路 UUID",
+    "path_code": "PATH-001",
+    "endpoint": "start",
+    "position": [0.0, 0.0, 0.0],
+    "cell": [600, 600, 0]
+  }],
+  "edges": [{
+    "id": "road:<道路 UUID>:forward",
+    "kind": "road",
+    "from_node_id": "road:<道路 UUID>:start",
+    "to_node_id": "road:<道路 UUID>:end",
+    "direction": "forward",
+    "path_id": "道路 UUID",
+    "path_code": "PATH-001"
+  }]
+}
+```
+
+`nodes` 仅包含启用道路的端点。`edges.kind=road` 表示按该道路方向允许通行，`edges.kind=junction` 表示两条不同道路端点的自动双向接驳，后者的 `direction` 为 `connector`，且不含 `path_id` 与 `path_code`。平台按固定 `0.05m` 体素及 `origin` 计算端点 `cell`：端点同格，或三轴曼哈顿距离为 1（共享一个体素面）时生成两条反向 `junction` 边。设备只能在本机设备类型、净宽、坡度和安全校验均满足的 `road` 边上通行，并可用 `junction` 边在道路间转接。平台只下发真实道路和拓扑，不实现机器人侧寻路或运动控制。
 
 成功响应包含：
 

@@ -19,7 +19,7 @@ export const DEVICE_TYPE_LABELS: Record<string, string> = {
 export const DEVICE_STATUS_LABELS: Record<string, string> = {
   idle: '待机', charging: '充电中', moving: '移动中',
   working: '作业中', paused: '已暂停', maintenance: '维护', occupancy: '维修占用', fault: '故障',
-  pending: '待处理', assigned: '已分配', ready: '就绪', offline: '离线',
+  pending: '待处理', assigned: '已分配', ready: '就绪', offline: '离线', planned_offline: '主动离线',
 };
 
 /** 任务状态标签；接口内部仍使用英文编码。 */
@@ -71,7 +71,7 @@ export const ALERT_STATUS_LABELS: Record<string, string> = {
 
 /** 设备健康指标标签。 */
 export const HEALTH_STATUS_LABELS: Record<string, string> = {
-  ok: '正常', warn: '警告', fail: '故障', busy: '忙碌', unknown: '未知',
+  ok: '正常', warn: '警告', fail: '故障', busy: '忙碌', planned_offline: '主动离线', unknown: '未知',
 };
 
 /** 实时事件类型标签。 */
@@ -113,7 +113,7 @@ export const COLORS = {
 export const STATUS_COLORS: Record<string, string> = {
   idle: COLORS.gray, charging: COLORS.blue, moving: COLORS.cyan,
   working: COLORS.green, paused: COLORS.amber, maintenance: COLORS.amber,
-  occupancy: COLORS.purple, fault: COLORS.red, offline: COLORS.red,
+  occupancy: COLORS.purple, fault: COLORS.red, offline: COLORS.red, planned_offline: COLORS.amber,
 };
 
 /** 告警级别颜色 */
@@ -193,6 +193,7 @@ export const FILTER_CHIPS = [
   { id: 'charging', label: '充电', color: COLORS.blue },
   { id: 'fault', label: '故障', color: COLORS.red },
   { id: 'offline', label: '离线', color: COLORS.red },
+  { id: 'planned_offline', label: '主动离线', color: COLORS.amber },
   { id: 'occupancy', label: '维修占用', color: COLORS.purple },
 ] as const;
 

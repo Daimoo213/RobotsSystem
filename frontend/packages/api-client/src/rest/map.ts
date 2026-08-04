@@ -3,6 +3,8 @@
 import type { GridMapConfig, MapPath, MapPoint, MapRegion, SceneConfig } from '@robots/shared-types';
 import { apiDelete, apiFetch, apiGet } from './client';
 
+type MapPathInput = Omit<MapPath, 'id' | 'start' | 'end'>;
+
 export function getRegions() {
   return apiGet<MapRegion[]>('/map/regions');
 }
@@ -35,8 +37,13 @@ export function createPoint(point: Omit<MapPoint, 'id'>) {
   return apiFetch<MapPoint>('/map/points', { method: 'POST', body: JSON.stringify(point) });
 }
 
-export function createPath(path: Omit<MapPath, 'id'>) {
+export function createPath(path: MapPathInput) {
   return apiFetch<MapPath>('/map/paths', { method: 'POST', body: JSON.stringify(path) });
+}
+
+/** Atomically persist all roads drawn for one network editing operation. */
+export function createPathsBatch(paths: MapPathInput[]) {
+  return apiFetch<MapPath[]>('/map/paths/batch', { method: 'POST', body: JSON.stringify(paths) });
 }
 
 export function updateRegion(regionId: string, region: Omit<MapRegion, 'id'>) {
@@ -47,7 +54,7 @@ export function updatePoint(pointId: string, point: Omit<MapPoint, 'id'>) {
   return apiFetch<MapPoint>(`/map/points/${pointId}`, { method: 'PUT', body: JSON.stringify(point) });
 }
 
-export function updatePath(pathId: string, path: Omit<MapPath, 'id'>) {
+export function updatePath(pathId: string, path: MapPathInput) {
   return apiFetch<MapPath>(`/map/paths/${pathId}`, { method: 'PUT', body: JSON.stringify(path) });
 }
 

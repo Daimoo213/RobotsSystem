@@ -21,6 +21,7 @@ from app.models.models import (
     TaskResourceRequirement,
 )
 from app.scheduler.matching import capability_codes_match, device_is_compatible
+from app.services.device_connectivity import connection_status
 
 
 ACTIVE_ALLOCATION_STATES = {
@@ -179,7 +180,6 @@ async def plan_task_resources(
     # their reserved remaining quota is counted below rather than dispatched again.
     own_active_device_ids = {allocation.device_id for allocation in active_allocations}
     active_device_ids.difference_update(own_active_device_ids)
-    cutoff = planning_at - timedelta(seconds=settings.gateway_offline_after_seconds)
     target = (task.map_point.x, task.map_point.y) if task.map_point is not None else (0.0, 0.0)
 
     proposals: list[AllocationProposal] = []
@@ -206,7 +206,11 @@ async def plan_task_resources(
         for device in devices:
             if device.id in selected_device_ids or device.id in own_active_device_ids:
                 continue
-            if not device.last_heartbeat or device.last_heartbeat < cutoff:
+            if connection_status(
+                device.last_heartbeat,
+                now=planning_at,
+                offline_reported_at=getattr(device, "offline_reported_at", None),
+            ) != "online":
                 continue
             if device.status not in {"idle", "ready"} or device.battery < settings.low_battery_threshold:
                 continue

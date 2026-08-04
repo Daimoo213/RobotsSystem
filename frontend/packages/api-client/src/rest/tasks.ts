@@ -75,12 +75,20 @@ export function recalculateTaskResourcePlan(taskId: string) {
   return apiPost<Task>(`/tasks/${taskId}/resource-plan/recalculate`);
 }
 
+export interface TaskControlResult {
+  ok: boolean;
+  delivery: 'queued';
+  command_ids?: string[];
+  execution_ids?: string[];
+  task?: Task;
+}
+
 export function pauseTask(taskId: string) {
-  return apiPost(`/tasks/${taskId}/pause`);
+  return apiPost<TaskControlResult>(`/tasks/${taskId}/pause`);
 }
 
 export function resumeTask(taskId: string) {
-  return apiPost(`/tasks/${taskId}/resume`);
+  return apiPost<TaskControlResult>(`/tasks/${taskId}/resume`);
 }
 
 export interface TaskCancelResult {
