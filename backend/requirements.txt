@@ -1,43 +1,43 @@
 # RobotsClusterScheduler backend requirements
 # Web framework
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+python-multipart==0.0.32
 
 # Database
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-alembic==1.14.0
-psycopg2-binary==2.9.10
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.18.5
+psycopg2-binary==2.9.12
 
 # Redis
-redis[hiredis]==5.2.1
+redis[hiredis]==5.3.1
 
 # Config
-pydantic==2.10.4
-pydantic-settings==2.7.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
 
 # YAML (for script configs)
-pyyaml==6.0.2
+pyyaml==6.0.3
 
 # Excel export
 openpyxl==3.1.5
-reportlab==4.2.5
+reportlab==4.5.1
 
 # MQTT (optional, for real device)
-aiomqtt==2.3.0
+aiomqtt==2.5.1
 
 # Logging
 structlog==24.4.0
 
 # Testing
-pytest==8.3.4
-pytest-asyncio==0.25.0
+pytest==8.4.2
+pytest-asyncio==0.26.0
 httpx==0.28.1
 
 # CORS
 # (handled by fastapi middleware)
 
 # Auth
-pyjwt==2.10.1
+pyjwt==2.13.0
 passlib[bcrypt]==1.7.4
